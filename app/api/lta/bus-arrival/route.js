@@ -5,7 +5,7 @@ export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const busStopCode = searchParams.get('code') || '83139'; // Default to a test stop if none provided
 
-  const LTA_API_KEY = ' LTA API KEY'; // ⚠️ REPLACE THIS!
+  const LTA_API_KEY = process.env.LTA_API_KEY;// ⚠️ REPLACE THIS!
 
   try {
     const response = await fetch(

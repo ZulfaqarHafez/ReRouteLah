@@ -7,11 +7,11 @@ export async function GET(request) {
   const destLat = searchParams.get('destLat');
   const destLng = searchParams.get('destLng');
 
-  // 🔴 KEEP YOUR ONEMAP TOKEN HERE
-  const ONEMAP_TOKEN = 'onemapapi';
+  // KEEP YOUR ONEMAP TOKEN HERE
+  const ONEMAP_TOKEN = process.env.ONEMAP_TOKEN;;
 
   if (!startLat || !startLng || !destLat || !destLng) {
-    return NextResponse.json({ error: 'Missing coordinates' }, { status: 400 });
+    return NextResponse.json({ error: 'Missing coordDinates' }, { status: 400 });
   }
 
   try {

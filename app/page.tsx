@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Navigation, Bus, AlertTriangle, CheckCircle, Search, MapPin, Compass, Map as MapIcon, Video } from 'lucide-react';
+import { Navigation, Bus, AlertTriangle, CheckCircle, Search, MapPin, Compass, Map as MapIcon, Video, ShieldAlert } from 'lucide-react';
 import dynamic from 'next/dynamic';
 
-// Dynamic import with no SSR to prevent build errors
+// FIXED: Using relative path to match file structure
 const MapDisplay = dynamic(() => import('./components/MapDisplay'), { 
   ssr: false, 
   loading: () => <div style={{color: 'white', padding: '20px'}}>Loading Map...</div>
@@ -120,7 +120,7 @@ export default function ARNavigation() {
     setHeading(compass);
   };
 
-  // --- 2. NAVIGATION API INTEGRATION (OneMap) ---
+  // --- 2. NAVIGATION API INTEGRATION ---
   const updateNavigation = async (currentLat: number, currentLng: number, dest: {latitude: number, longitude: number}) => {
     try {
       const res = await fetch(
@@ -133,13 +133,17 @@ export default function ARNavigation() {
         setNavInstruction("Direct Compass Mode");
         setTargetCoords(null); 
         
-        // 🟢 NEW: Fallback - Draw a straight line if route fails so map isn't empty
+        // Fallback - Draw a straight line if route fails so map isn't empty
         setRoutePath([[currentLat, currentLng], [dest.latitude, dest.longitude]]);
         
       } else if (data.latitude) {
         setIsDirectMode(false);
         setTargetCoords({ latitude: data.latitude, longitude: data.longitude });
-        setNavInstruction(data.instruction); 
+        
+        // Only update instruction if we don't have a specific bus instruction yet
+        if (!navInstruction.includes("Take Bus")) {
+            setNavInstruction(data.instruction); 
+        }
         
         // Save the route geometry
         if (data.path) {
@@ -179,6 +183,55 @@ export default function ARNavigation() {
     setSearchResults([]); 
     setSearchQuery(result.SEARCHVAL); 
     setNavInstruction(`Navigating to ${result.SEARCHVAL}...`);
+    
+    // Check for Bus Route
+    findBestBus(lat, lng);
+  };
+
+  // --- 🟢 BUS ROUTE PLANNER LOGIC ---
+  const findBestBus = async (destLat: number, destLng: number) => {
+    if (!currentPos) return;
+    
+    try {
+        const res = await fetch(`/api/route-planner?startLat=${currentPos.lat}&startLng=${currentPos.lng}&destLat=${destLat}&destLng=${destLng}`);
+        const data = await res.json();
+        
+        if (data.busNumber) {
+            setNavInstruction(`Take Bus ${data.busNumber} from ${data.boardStop}`);
+            setBusService(data.busNumber); // Focus HUD on this bus
+        }
+    } catch (e) {
+        console.error("Bus Route Error", e);
+    }
+  }
+
+  // --- 🟢 EMERGENCY SAFE REROUTE ---
+  const handleSafeReroute = () => {
+    if (!currentPos) {
+        alert("Waiting for GPS signal...");
+        return;
+    }
+    
+    setNavInstruction("Finding nearest Safe Point...");
+    
+    fetch(`/api/find-safe-point?lat=${currentPos.lat}&lng=${currentPos.lng}`)
+      .then(res => res.json())
+      .then(data => {
+         if(data.error) {
+             alert("Could not find safe point");
+             return;
+         }
+         
+         setDestination({ latitude: data.lat, longitude: data.lng });
+         setSearchQuery(data.name); 
+         setNavInstruction(`Rerouting to Safe Point: ${data.name}`);
+         
+         updateNavigation(currentPos.lat, currentPos.lng, { latitude: data.lat, longitude: data.lng });
+         
+         // Also check if there's a bus to get there!
+         findBestBus(data.lat, data.lng);
+      })
+      .catch(err => console.error(err));
   };
 
   // --- 3. LTA BUS API INTEGRATION ---
@@ -187,7 +240,19 @@ export default function ARNavigation() {
     try {
       const res = await fetch(`/api/lta/bus-arrival?code=${DEMO_BUS_STOP}`);
       const data = await res.json();
-      const arrivingBus = data.Services && data.Services.length > 0 ? data.Services[0] : null;
+      
+      // If we are looking for a specific bus (from route planner), find that one
+      // Otherwise, default to the first one arriving
+      let arrivingBus = null;
+      
+      if (busService !== 'Scanning...' && busService !== 'No Svc') {
+          arrivingBus = data.Services?.find((s: any) => s.ServiceNo === busService);
+      }
+      
+      // Fallback if specific bus not found or not set
+      if (!arrivingBus && data.Services && data.Services.length > 0) {
+          arrivingBus = data.Services[0];
+      }
       
       if (arrivingBus && arrivingBus.NextBus) {
         setBusService(arrivingBus.ServiceNo);
@@ -202,8 +267,10 @@ export default function ARNavigation() {
           navigator.vibrate([200, 100, 200]); 
         }
       } else {
-        setBusService("No Svc");
-        setNextBusTime("--");
+        // Only set to No Svc if we were looking for something specific and it's gone
+        if (busService !== 'Scanning...') {
+             setNextBusTime("--");
+        }
       }
     } catch (err) {
       console.error("Bus fetch failed", err);
@@ -239,6 +306,20 @@ export default function ARNavigation() {
           }}
         >
           {viewMode === 'ar' ? <MapIcon color="black" /> : <Video color="black" />}
+        </button>
+      </div>
+
+      {/* 🟢 NEW: EMERGENCY BUTTON (Visible always) */}
+      <div style={{ position: 'absolute', bottom: '150px', right: '20px', zIndex: 50 }}>
+        <button 
+          onClick={handleSafeReroute}
+          style={{ 
+            background: '#ff4444', color: 'white', border: 'none', borderRadius: '50%', width: '60px', height: '60px',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 15px rgba(255,0,0,0.4)',
+            animation: 'pulse 2s infinite'
+          }}
+        >
+          <ShieldAlert size={32} />
         </button>
       </div>
 
