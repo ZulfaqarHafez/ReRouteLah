@@ -1,36 +1,64 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+ReRouteLah (AR Bus Validator)
 
-## Getting Started
 
-First, run the development server:
+Current Features:
 
-```bash
+AR Compass: A digital arrow overlaid on the camera feed.
+
+Bus Safety Validator: Real-time crowd density checks using the LTA DataMall API (Green = Safe, Red = Crowded).
+
+1. Prerequisites
+
+Before starting, ensure you have:
+
+Node.js installed (v18 or newer).
+
+An LTA DataMall API Key (Check your email from LTA).
+
+2. Installation
+
+Open your terminal in this project folder.
+
+Install the required dependencies:
+
+npm install
+
+
+3. Configuration (Critical!)
+
+You must add your API Key for the bus data to work.
+
+Navigate to the file: app/api/lta/bus-arrival/route.js
+
+Open it and find this line:
+
+const LTA_API_KEY = 'YOUR_ACTUAL_LTA_API_KEY_HERE';
+
+
+Replace 'YOUR_ACTUAL_LTA_API_KEY_HERE' with your actual key string.
+
+Optional: Change Demo Bus Stop
+To test with a bus stop near you:
+
+Open app/page.tsx.
+
+Modify these lines at the top:
+
+const DEMO_BUS_STOP = '83139'; // Change to your bus stop code
+const DEMO_BUS_SERVICE = '15'; // Change to a bus service at that stop
+
+
+4. Running the App
+
+Option A: Laptop Testing (Localhost)
+
+Use this to check if the code runs, but Camera/AR will likely fail (browsers block cameras on http://).
+
+Run the development server:
+
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Open http://localhost:3000 in your browser.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+To test the raw API data, visit: http://localhost:3000/test-api
