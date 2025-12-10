@@ -4,36 +4,32 @@ import { PatientInfo } from "@/types";
 
 interface DeviationAlertProps {
   patient: PatientInfo;
-  onClose: () => void;
+  deviationDistance?: number;
+  onDismiss: () => void;
+  onViewOnMap: () => void;
+  onCallPatient: () => void;
 }
 
 export default function DeviationAlert(props: DeviationAlertProps) {
   // Destructure props inside the component to ensure they are captured
-  const { patient, onClose } = props;
+  const { patient, deviationDistance, onDismiss, onViewOnMap, onCallPatient } = props;
 
   const handleCall = () => {
-    // Try to find a phone number in profile or guardianPhone
-    const phoneNumber = patient.profile?.phone || patient.guardianPhone;
-    
-    if (phoneNumber) {
-      window.location.href = `tel:${phoneNumber}`;
-    } else {
-      alert("No phone number available for this patient.");
+    if (typeof onCallPatient === 'function') {
+      onCallPatient();
     }
   };
 
   const handleViewLocation = () => {
-    if (typeof onClose === 'function') {
-      onClose();
+    if (typeof onViewOnMap === 'function') {
+      onViewOnMap();
     }
   };
 
   const handleClose = (e?: React.MouseEvent) => {
     e?.stopPropagation();
-    if (typeof onClose === 'function') {
-      onClose();
-    } else {
-      console.error("onClose prop is missing in DeviationAlert", props);
+    if (typeof onDismiss === 'function') {
+      onDismiss();
     }
   };
 
@@ -73,7 +69,7 @@ export default function DeviationAlert(props: DeviationAlertProps) {
           {/* Distance Card */}
           <div className="rounded-2xl bg-red-950/30 border border-red-900/50 p-6 text-center">
             <div className="text-5xl font-bold text-red-500 drop-shadow-sm">
-              {Math.round(patient.deviationDistance || 0)}m
+              {Math.round(deviationDistance || patient.deviationDistance || 0)}m
             </div>
             <p className="text-gray-400 mt-2 font-medium">from planned route</p>
           </div>

@@ -35,10 +35,10 @@ const CaregiverInterface = ({
   patientDestination
 }: CaregiverInterfaceProps) => {
   // 🟢 MERGED: Get caregiverData from AuthContext to check all patients' status
-  const { logout, caregiverData } = useAuth(); 
+  const { logout, caregiverData } = useAuth();
   const [view, setView] = useState<CaregiverView>("dashboard");
-  // 🔴 REMOVED: showDeviationAlert state, now derived from caregiverData
   const [selectedPatientForDestinations, setSelectedPatientForDestinations] = useState<PatientInfo | null>(null);
+  const [dismissedAlertPatientId, setDismissedAlertPatientId] = useState<string | null>(null);
   
   // 🟢 MERGED: Use state for map center location (Caregiver's location)
   const [caregiverLocation, setCaregiverLocation] = useState<[number, number]>(
@@ -69,15 +69,21 @@ const CaregiverInterface = ({
   // 🟢 MERGED: Derive the currently deviated patient from global state
   const deviatedPatient = caregiverData?.patients.find((p) => p.isDeviated);
 
-  // 🔴 REMOVED: Mock deviation variables and useCallback handler
+  // Reset dismissed alert when patient returns to route
+  useEffect(() => {
+    if (!deviatedPatient && dismissedAlertPatientId) {
+      setDismissedAlertPatientId(null);
+    }
+  }, [deviatedPatient, dismissedAlertPatientId]);
 
-  // 🟢 MERGED: Handle Dismiss (Acknowledge alert, but status remains until patient is back on route)
+  // 🟢 MERGED: Handle Dismiss (Acknowledge alert and hide it)
   const handleDismissAlert = () => {
+    if (deviatedPatient) {
+      setDismissedAlertPatientId(deviatedPatient.id);
+    }
     toast({
-      title: "Alert acknowledged",
-      description:
-        "The traveler is still off route. The status will be cleared only when they return to the correct path.",
-      variant: "info",
+      title: "Alert dismissed",
+      description: "You can view the patient's status on the dashboard.",
     });
   };
 
@@ -207,12 +213,17 @@ const CaregiverInterface = ({
 
       case "map":
         return (
-          <div className="h-[calc(100vh-80px)] space-y-4 pb-24">
-            <div className="flex items-center justify-start">
-                <Button variant="outline" onClick={() => setView("dashboard")} className="gap-2">
-                    <ArrowLeft className="h-4 w-4" />
-                    Back
-                </Button>
+          <div className="relative h-[calc(100vh-80px)] pb-24 space-y-4">
+            {/* Sticky Back Button - appears above deviation alert */}
+            <div className="sticky top-0 z-[101] bg-background/95 backdrop-blur-sm pb-3">
+              <Button
+                variant="outline"
+                onClick={() => setView("dashboard")}
+                className="gap-2 shadow-lg hover:shadow-xl transition-all"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Back to Dashboard
+              </Button>
             </div>
 
             <LiveLocationBanner
@@ -313,8 +324,8 @@ const CaregiverInterface = ({
   return (
     <div className="min-h-screen pb-8 pt-4">
       
-      {/* 🟢 MERGED: GLOBAL DEVIATION ALERT (always on top of the layout) */}
-      {deviatedPatient && (
+      {/* 🟢 MERGED: GLOBAL DEVIATION ALERT (shows only if not dismissed) */}
+      {deviatedPatient && deviatedPatient.id !== dismissedAlertPatientId && (
         <DeviationAlert
           patient={deviatedPatient}
           deviationDistance={deviatedPatient.deviationDistance}
@@ -322,6 +333,7 @@ const CaregiverInterface = ({
           onViewOnMap={() => {
             setSelectedPatientForMap(deviatedPatient);
             setView("map");
+            handleDismissAlert();
           }}
           onCallPatient={handleCallPatient}
         />
