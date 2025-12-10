@@ -1,3 +1,5 @@
+'use client';
+
 import { useState, useEffect, useCallback } from "react";
 import { Bell, MapPin, Settings, Phone, AlertTriangle, UserPlus, Users, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";

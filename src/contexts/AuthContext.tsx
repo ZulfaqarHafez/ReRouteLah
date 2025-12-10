@@ -1,3 +1,5 @@
+'use client';
+
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { AuthSession, UserRole, PatientInfo, CaregiverInfo, SavedDestination } from '@/types/app';
 import { mockSavedDestinations } from '@/data/mockData';

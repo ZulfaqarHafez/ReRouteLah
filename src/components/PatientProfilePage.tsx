@@ -1,3 +1,5 @@
+'use client';
+
 import { QRCodeSVG } from "qrcode.react";
 import { Phone, User, Home, ArrowLeft } from "lucide-react";
 import { PatientInfo } from "@/types/app";
