@@ -1,17 +1,17 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Navigation, Bus, AlertTriangle, CheckCircle, Search, MapPin, Compass, Map as MapIcon, Video, ShieldAlert } from 'lucide-react';
+import { Navigation, Bus, AlertTriangle, CheckCircle, Search, MapPin, Compass, Map as MapIcon, Video, ShieldAlert, User } from 'lucide-react';
 import dynamic from 'next/dynamic';
+import { useRouter } from 'next/navigation';
 
-// FIXED: Using relative path to match file structure
 const MapDisplay = dynamic(() => import('./components/MapDisplay'), { 
   ssr: false, 
   loading: () => <div style={{color: 'white', padding: '20px'}}>Loading Map...</div>
 });
 
 export default function ARNavigation() {
-  // --- STATE SETUP ---
+  const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [heading, setHeading] = useState(0); 
@@ -37,10 +37,8 @@ export default function ARNavigation() {
   const [nextBusTime, setNextBusTime] = useState('');
   const [loadingBus, setLoadingBus] = useState(false);
 
-  // --- CONFIG ---
   const DEMO_BUS_STOP = '83139'; 
 
-  // --- HELPER: Calculate Bearing (Math for Arrow) ---
   const calculateBearing = (startLat: number, startLng: number, destLat: number, destLng: number) => {
     const toRad = (deg: number) => (deg * Math.PI) / 180;
     const toDeg = (rad: number) => (rad * 180) / Math.PI;
@@ -58,420 +56,516 @@ export default function ARNavigation() {
     return (brng + 360) % 360;
   };
 
-  // --- 1. SENSOR & CAMERA LOGIC ---
   const startExperience = async () => {
-    // A. Request Camera
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'environment' } 
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
+        audio: false
       });
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
-    } catch (err) {
-      console.error("Camera Error:", err);
-    }
 
-    // B. Request Compass
-    // @ts-ignore
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-      try {
-        // @ts-ignore
-        const response = await DeviceOrientationEvent.requestPermission();
-        if (response === 'granted') {
+      if (typeof DeviceOrientationEvent !== 'undefined' && 
+          typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
+        const permission = await (DeviceOrientationEvent as any).requestPermission();
+        if (permission === 'granted') {
           window.addEventListener('deviceorientation', handleOrientation);
-          setPermissionGranted(true);
         }
-      } catch (error) { console.error(error); }
-    } else {
-      // @ts-ignore
-      window.addEventListener('deviceorientationabsolute', handleOrientation); 
-      window.addEventListener('deviceorientation', handleOrientation); 
-      setPermissionGranted(true);
-    }
+      } else {
+        window.addEventListener('deviceorientation', handleOrientation);
+      }
 
-    // C. Start GPS & Navigation Logic
-    if ('geolocation' in navigator) {
       navigator.geolocation.watchPosition(
         (position) => {
-          const { latitude, longitude } = position.coords;
-          setCurrentPos({ lat: latitude, lng: longitude }); // Update Map Pos
-          
-          if (destination) {
-            const directBearing = calculateBearing(latitude, longitude, destination.latitude, destination.longitude);
-            if (isDirectMode || !targetCoords) {
-               setBearing(directBearing);
-            }
-            updateNavigation(latitude, longitude, destination);
-          }
+          setCurrentPos({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          });
         },
-        (error) => console.error("GPS Error", error),
+        (error) => console.error(error),
         { enableHighAccuracy: true }
       );
+
+      setPermissionGranted(true);
+    } catch (err) {
+      console.error("Permission denied or error:", err);
+      alert("Camera/Sensor access denied. AR features limited.");
     }
-
-    // D. Start Bus Polling
-    fetchBusData();
-    setInterval(fetchBusData, 30000); 
   };
 
-  const handleOrientation = (event: any) => {
-    let compass = event.webkitCompassHeading || Math.abs(event.alpha - 360);
-    setHeading(compass);
+  const handleOrientation = (event: DeviceOrientationEvent) => {
+    if (event.alpha !== null) {
+      const alpha = event.alpha;
+      const adjustedHeading = (360 - alpha) % 360;
+      setHeading(adjustedHeading);
+    }
   };
 
-  // --- 2. NAVIGATION API INTEGRATION ---
-  const updateNavigation = async (currentLat: number, currentLng: number, dest: {latitude: number, longitude: number}) => {
+  const fetchRoute = async (destLat: number, destLng: number) => {
+    if (!currentPos) return;
+
     try {
       const res = await fetch(
-        `/api/navigation?startLat=${currentLat}&startLng=${currentLng}&destLat=${dest.latitude}&destLng=${dest.longitude}`
+        `/api/navigation?startLat=${currentPos.lat}&startLng=${currentPos.lng}&destLat=${destLat}&destLng=${destLng}`
       );
       const data = await res.json();
 
-      if (data.useFallback || data.error) {
+      if (data.useFallback || !data.path) {
         setIsDirectMode(true);
-        setNavInstruction("Direct Compass Mode");
-        setTargetCoords(null); 
-        
-        // Fallback - Draw a straight line if route fails so map isn't empty
-        setRoutePath([[currentLat, currentLng], [dest.latitude, dest.longitude]]);
-        
-      } else if (data.latitude) {
+        setTargetCoords({ latitude: destLat, longitude: destLng });
+        setNavInstruction("Navigate directly (straight line)");
+        setRoutePath([[currentPos.lat, currentPos.lng], [destLat, destLng]]);
+      } else {
         setIsDirectMode(false);
         setTargetCoords({ latitude: data.latitude, longitude: data.longitude });
-        
-        // Only update instruction if we don't have a specific bus instruction yet
-        if (!navInstruction.includes("Take Bus")) {
-            setNavInstruction(data.instruction); 
-        }
-        
-        // Save the route geometry
-        if (data.path) {
-          setRoutePath(data.path);
-        }
-
-        const turnBearing = calculateBearing(currentLat, currentLng, data.latitude, data.longitude);
-        setBearing(turnBearing);
+        setNavInstruction(data.instruction || "Follow the path");
+        setRoutePath(data.path);
       }
     } catch (err) {
-      console.error("Nav Error", err);
+      console.error(err);
       setIsDirectMode(true);
-      // Fallback straight line
-      setRoutePath([[currentLat, currentLng], [dest.latitude, dest.longitude]]);
+      setTargetCoords({ latitude: destLat, longitude: destLng });
+      setNavInstruction("Navigate directly (error)");
     }
   };
 
-  // --- SEARCH ---
-  const handleSearch = async (e: any) => {
-    e.preventDefault();
-    if (!searchQuery) return;
+  const searchLocation = async (query: string) => {
+    if (!query.trim()) return;
     setIsSearching(true);
+
     try {
-      const res = await fetch(`/api/search?q=${searchQuery}`);
+      const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
       const data = await res.json();
-      setSearchResults(data.results || []);
-    } catch (error) {
-      console.error("Search failed", error);
+      if (data.results && data.results.length > 0) {
+        setSearchResults(data.results.slice(0, 5));
+      } else {
+        setSearchResults([]);
+      }
+    } catch (err) {
+      console.error(err);
+      setSearchResults([]);
+    } finally {
+      setIsSearching(false);
     }
-    setIsSearching(false);
   };
 
-  const selectLocation = (result: any) => {
+  const selectDestination = (result: any) => {
     const lat = parseFloat(result.LATITUDE);
     const lng = parseFloat(result.LONGITUDE);
     setDestination({ latitude: lat, longitude: lng });
-    setSearchResults([]); 
-    setSearchQuery(result.SEARCHVAL); 
-    setNavInstruction(`Navigating to ${result.SEARCHVAL}...`);
-    
-    // Check for Bus Route
-    findBestBus(lat, lng);
+    setSearchQuery(result.SEARCHVAL);
+    setSearchResults([]);
+    fetchRoute(lat, lng);
   };
 
-  // --- 🟢 BUS ROUTE PLANNER LOGIC ---
-  const findBestBus = async (destLat: number, destLng: number) => {
-    if (!currentPos) return;
-    
-    try {
-        const res = await fetch(`/api/route-planner?startLat=${currentPos.lat}&startLng=${currentPos.lng}&destLat=${destLat}&destLng=${destLng}`);
-        const data = await res.json();
-        
-        if (data.busNumber) {
-            setNavInstruction(`Take Bus ${data.busNumber} from ${data.boardStop}`);
-            setBusService(data.busNumber); // Focus HUD on this bus
-        }
-    } catch (e) {
-        console.error("Bus Route Error", e);
-    }
-  }
-
-  // --- 🟢 EMERGENCY SAFE REROUTE ---
-  const handleSafeReroute = () => {
-    if (!currentPos) {
-        alert("Waiting for GPS signal...");
-        return;
-    }
-    
-    setNavInstruction("Finding nearest Safe Point...");
-    
-    fetch(`/api/find-safe-point?lat=${currentPos.lat}&lng=${currentPos.lng}`)
-      .then(res => res.json())
-      .then(data => {
-         if(data.error) {
-             alert("Could not find safe point");
-             return;
-         }
-         
-         setDestination({ latitude: data.lat, longitude: data.lng });
-         setSearchQuery(data.name); 
-         setNavInstruction(`Rerouting to Safe Point: ${data.name}`);
-         
-         updateNavigation(currentPos.lat, currentPos.lng, { latitude: data.lat, longitude: data.lng });
-         
-         // Also check if there's a bus to get there!
-         findBestBus(data.lat, data.lng);
-      })
-      .catch(err => console.error(err));
-  };
-
-  // --- 3. LTA BUS API INTEGRATION ---
-  const fetchBusData = async () => {
+  const fetchBusArrival = async () => {
     setLoadingBus(true);
     try {
       const res = await fetch(`/api/lta/bus-arrival?code=${DEMO_BUS_STOP}`);
       const data = await res.json();
-      
-      // If we are looking for a specific bus (from route planner), find that one
-      // Otherwise, default to the first one arriving
-      let arrivingBus = null;
-      
-      if (busService !== 'Scanning...' && busService !== 'No Svc') {
-          arrivingBus = data.Services?.find((s: any) => s.ServiceNo === busService);
-      }
-      
-      // Fallback if specific bus not found or not set
-      if (!arrivingBus && data.Services && data.Services.length > 0) {
-          arrivingBus = data.Services[0];
-      }
-      
-      if (arrivingBus && arrivingBus.NextBus) {
-        setBusService(arrivingBus.ServiceNo);
-        setBusLoad(arrivingBus.NextBus.Load); 
-        const arrival = new Date(arrivingBus.NextBus.EstimatedArrival);
-        const now = new Date();
-        const diffMs = arrival.getTime() - now.getTime();
-        const diffMins = Math.ceil(diffMs / 60000);
-        setNextBusTime(diffMins > 0 ? `${diffMins} min` : 'Arr');
+
+      if (data.Services && data.Services.length > 0) {
+        const firstBus = data.Services[0];
+        setBusService(firstBus.ServiceNo);
+        setBusLoad(firstBus.NextBus?.Load || null);
         
-        if (arrivingBus.NextBus.Load === 'LSD' && navigator.vibrate) {
-          navigator.vibrate([200, 100, 200]); 
-        }
-      } else {
-        // Only set to No Svc if we were looking for something specific and it's gone
-        if (busService !== 'Scanning...') {
-             setNextBusTime("--");
+        const eta = firstBus.NextBus?.EstimatedArrival;
+        if (eta) {
+          const arrivalTime = new Date(eta);
+          const now = new Date();
+          const diff = Math.floor((arrivalTime.getTime() - now.getTime()) / 60000);
+          setNextBusTime(diff > 0 ? `${diff} min` : 'Arriving');
         }
       }
     } catch (err) {
-      console.error("Bus fetch failed", err);
+      console.error(err);
+    } finally {
+      setLoadingBus(false);
     }
-    setLoadingBus(false);
   };
 
-  // --- 4. UI HELPERS ---
-  const getStatusColor = () => {
-    if (busLoad === 'SEA') return 'rgba(0, 255, 0, 0.6)'; 
-    if (busLoad === 'SDA') return 'rgba(255, 165, 0, 0.6)'; 
-    if (busLoad === 'LSD') return 'rgba(255, 0, 0, 0.7)'; 
-    return 'rgba(0,0,0,0.5)'; 
-  };
-  const getStatusText = () => {
-    if (busLoad === 'SEA') return 'Space Available - OK';
-    if (busLoad === 'SDA') return 'Standing Only';
-    if (busLoad === 'LSD') return 'CROWDED - WAIT';
-    return 'Scanning...';
+  const findNearestSafePoint = async () => {
+    if (!currentPos) {
+      alert("Location not available yet");
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/find-safe-point?lat=${currentPos.lat}&lng=${currentPos.lng}`);
+      const data = await res.json();
+
+      if (data.nearestPoint) {
+        const sp = data.nearestPoint;
+        setDestination({ latitude: sp.lat, longitude: sp.lng });
+        setSearchQuery(sp.name);
+        fetchRoute(sp.lat, sp.lng);
+        alert(`Routing to: ${sp.name} (${data.distance.toFixed(2)}km away)`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to find safe point");
+    }
   };
 
-  // --- RENDER ---
+  useEffect(() => {
+    if (permissionGranted && targetCoords && currentPos) {
+      const newBearing = calculateBearing(
+        currentPos.lat,
+        currentPos.lng,
+        targetCoords.latitude,
+        targetCoords.longitude
+      );
+      setBearing(newBearing);
+    }
+  }, [currentPos, targetCoords, permissionGranted]);
+
+  useEffect(() => {
+    fetchBusArrival();
+  }, []);
+
+  const arrowRotation = bearing - heading;
+
+  const getLoadColor = () => {
+    if (!busLoad) return '#6b7280';
+    if (busLoad === 'SEA') return '#10b981';
+    if (busLoad === 'SDA') return '#f59e0b';
+    return '#ef4444';
+  };
+
+  const getLoadText = () => {
+    if (!busLoad) return 'Checking...';
+    if (busLoad === 'SEA') return 'Seats Available';
+    if (busLoad === 'SDA') return 'Standing Room';
+    return 'Very Crowded - Wait!';
+  };
+
   return (
-    <div style={{ position: 'relative', height: '100vh', background: 'black', overflow: 'hidden' }}>
-      
-      {/* VIEW MODE TOGGLE BUTTON */}
-      <div style={{ position: 'absolute', top: '150px', right: '20px', zIndex: 50 }}>
-        <button 
-          onClick={() => setViewMode(viewMode === 'ar' ? 'map' : 'ar')}
-          style={{ 
-            background: 'white', border: 'none', borderRadius: '50%', width: '50px', height: '50px',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 10px rgba(0,0,0,0.3)'
-          }}
-        >
-          {viewMode === 'ar' ? <MapIcon color="black" /> : <Video color="black" />}
-        </button>
-      </div>
-
-      {/* 🟢 NEW: EMERGENCY BUTTON (Visible always) */}
-      <div style={{ position: 'absolute', bottom: '150px', right: '20px', zIndex: 50 }}>
-        <button 
-          onClick={handleSafeReroute}
-          style={{ 
-            background: '#ff4444', color: 'white', border: 'none', borderRadius: '50%', width: '60px', height: '60px',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 15px rgba(255,0,0,0.4)',
-            animation: 'pulse 2s infinite'
-          }}
-        >
-          <ShieldAlert size={32} />
-        </button>
-      </div>
-
-      {/* 1. VIEW: AR CAMERA */}
-      <div style={{ 
-        position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', 
-        visibility: viewMode === 'ar' ? 'visible' : 'hidden' 
+    <div style={{
+      height: '100vh',
+      width: '100vw',
+      overflow: 'hidden',
+      backgroundColor: '#000',
+      color: 'white',
+      position: 'relative',
+      fontFamily: 'system-ui, -apple-system, sans-serif'
+    }}>
+      {/* Header with Profile Icon */}
+      <div style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        padding: '16px',
+        background: 'linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, transparent 100%)',
+        zIndex: 20,
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center'
       }}>
-        <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-      </div>
-
-      {/* 2. VIEW: MAP DISPLAY */}
-      {viewMode === 'map' && currentPos && (
-        <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 5, background: '#eee' }}>
-          <MapDisplay 
-            userLat={currentPos.lat} 
-            userLng={currentPos.lng} 
-            destLat={destination?.latitude}
-            destLng={destination?.longitude}
-            routePath={routePath} 
-          />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Navigation size={24} color="#3b82f6" />
+          <span style={{ fontSize: '18px', fontWeight: 'bold' }}>SmartRoute Care</span>
         </div>
-      )}
-
-      {/* SEARCH OVERLAY (Always visible) */}
-      <div style={{ 
-          position: 'absolute', top: '10px', left: '10px', right: '10px', 
-          zIndex: 60, display: 'flex', flexDirection: 'column', gap: '5px' 
-      }}>
-        <form onSubmit={handleSearch} style={{ display: 'flex', gap: '5px' }}>
-            <input 
-                type="text" 
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search destination..."
-                style={{ 
-                    flex: 1, padding: '12px', borderRadius: '8px', border: 'none', 
-                    background: 'rgba(255,255,255,0.9)', color: '#000' 
-                }}
-            />
-            <button type="submit" style={{ 
-                padding: '12px', borderRadius: '8px', border: 'none', 
-                background: '#0070f3', color: 'white' 
-            }}>
-                <Search size={20} />
-            </button>
-        </form>
-        {/* Results... */}
-        {searchResults.length > 0 && (
-            <div style={{ 
-                background: 'rgba(255,255,255,0.95)', borderRadius: '8px', 
-                maxHeight: '200px', overflowY: 'auto', padding: '5px' 
-            }}>
-                {searchResults.map((res, idx) => (
-                    <div 
-                        key={idx} 
-                        onClick={() => selectLocation(res)}
-                        style={{ 
-                            padding: '10px', borderBottom: '1px solid #eee', 
-                            color: 'black', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px'
-                        }}
-                    >
-                        <MapPin size={16} />
-                        <div>
-                            <div style={{ fontWeight: 'bold' }}>{res.SEARCHVAL}</div>
-                            <div style={{ fontSize: '12px', color: '#555' }}>{res.ADDRESS}</div>
-                        </div>
-                    </div>
-                ))}
-            </div>
-        )}
+        
+        {/* Profile Button */}
+        <button
+          onClick={() => router.push('/profile')}
+          style={{
+            background: 'rgba(255, 255, 255, 0.2)',
+            border: '2px solid rgba(255, 255, 255, 0.3)',
+            borderRadius: '50%',
+            width: '40px',
+            height: '40px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            backdropFilter: 'blur(10px)'
+          }}
+        >
+          <User size={24} color="white" />
+        </button>
       </div>
 
       {!permissionGranted ? (
-        <button 
-          onClick={startExperience} 
-          style={{ 
-            position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', 
-            padding: '20px 40px', fontSize: '20px', zIndex: 50, 
-            background: '#0070f3', color: 'white', border: 'none', borderRadius: '12px'
-          }}>
-          Start AR Navigation
-        </button>
+        <div style={{
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '40px',
+          textAlign: 'center',
+          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
+        }}>
+          <Navigation size={80} style={{ marginBottom: '24px' }} />
+          <h1 style={{ fontSize: '32px', marginBottom: '16px' }}>ReRouteLah AR Navigation</h1>
+          <p style={{ fontSize: '18px', marginBottom: '32px', opacity: 0.9 }}>
+            Navigate Singapore safely with AR guidance
+          </p>
+          <button
+            onClick={startExperience}
+            style={{
+              padding: '16px 32px',
+              fontSize: '18px',
+              fontWeight: 'bold',
+              background: 'white',
+              color: '#667eea',
+              border: 'none',
+              borderRadius: '12px',
+              cursor: 'pointer',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.2)'
+            }}
+          >
+            Start Navigation
+          </button>
+        </div>
       ) : (
         <>
-          {/* TOP HUD: BUS SAFETY */}
-          <div style={{
-            position: 'absolute', 
-            top: '80px', left: '20px', right: '20px',
-            background: getStatusColor(), 
-            border: busLoad === 'LSD' ? '4px solid red' : 'none',
-            padding: '20px', 
-            borderRadius: '15px',
-            color: 'white', 
-            display: 'flex', 
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            transition: 'background 0.5s',
-            zIndex: 10
-          }}>
-            <div>
-              <div style={{ fontSize: '14px', opacity: 0.8 }}>Next Bus: {busService}</div>
-              <div style={{ fontSize: '24px', fontWeight: 'bold' }}>{nextBusTime}</div>
-              <div style={{ fontSize: '18px', fontWeight: 'bold', marginTop: '5px' }}>
-                {getStatusText()}
-              </div>
-            </div>
-            
-            <div>
-              {busLoad === 'SEA' && <CheckCircle size={48} />}
-              {busLoad === 'LSD' && <AlertTriangle size={48} />}
-              {busLoad === null && <Bus size={48} />}
-            </div>
-          </div>
+          {viewMode === 'ar' ? (
+            <>
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover'
+                }}
+              />
 
-          {/* MIDDLE: AR ARROW (Only in AR Mode) */}
-          {viewMode === 'ar' && (
-            <div style={{
-                position: 'absolute', top: '50%', left: '50%',
-                transform: `translate(-50%, -50%) rotate(${(bearing - heading + 360) % 360}deg)`,
-                transition: 'transform 0.1s ease-out',
+              <div style={{
+                position: 'absolute',
+                top: '80px',
+                left: '20px',
+                right: '20px',
                 zIndex: 5
-            }}>
-                <Navigation size={120} color={busLoad === 'LSD' ? 'red' : '#00ff00'} fill={busLoad === 'LSD' ? 'red' : '#00ff00'} />
+              }}>
+                <div style={{
+                  backgroundColor: 'rgba(0,0,0,0.7)',
+                  padding: '12px 16px',
+                  borderRadius: '12px',
+                  marginBottom: '12px',
+                  backdropFilter: 'blur(10px)'
+                }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    marginBottom: '8px'
+                  }}>
+                    <Bus size={20} />
+                    <span style={{ fontWeight: 'bold' }}>Next Bus: {busService}</span>
+                    <span style={{ marginLeft: 'auto', fontSize: '14px' }}>{nextBusTime}</span>
+                  </div>
+                  <div style={{
+                    padding: '8px 12px',
+                    backgroundColor: getLoadColor(),
+                    borderRadius: '8px',
+                    textAlign: 'center',
+                    fontWeight: 'bold'
+                  }}>
+                    {getLoadText()}
+                  </div>
+                </div>
+
+                {busLoad === 'LSD' && (
+                  <div style={{
+                    backgroundColor: 'rgba(239, 68, 68, 0.9)',
+                    padding: '12px',
+                    borderRadius: '12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px'
+                  }}>
+                    <AlertTriangle size={20} />
+                    <span>⚠️ Bus very crowded - Consider waiting</span>
+                  </div>
+                )}
+              </div>
+
+              {targetCoords && (
+                <div style={{
+                  position: 'absolute',
+                  top: '50%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  zIndex: 10
+                }}>
+                  <div
+                    style={{
+                      fontSize: '80px',
+                      transform: `rotate(${arrowRotation}deg)`,
+                      transition: 'transform 0.3s ease-out',
+                      filter: 'drop-shadow(0 0 20px rgba(16, 185, 129, 0.8))',
+                      color: '#10b981'
+                    }}
+                  >
+                    ↑
+                  </div>
+                </div>
+              )}
+
+              {navInstruction && (
+                <div style={{
+                  position: 'absolute',
+                  bottom: '200px',
+                  left: '20px',
+                  right: '20px',
+                  zIndex: 5
+                }}>
+                  <div style={{
+                    backgroundColor: 'rgba(0,0,0,0.8)',
+                    padding: '16px',
+                    borderRadius: '12px',
+                    textAlign: 'center',
+                    backdropFilter: 'blur(10px)'
+                  }}>
+                    <Compass size={24} style={{ marginBottom: '8px' }} />
+                    <p style={{ margin: 0, fontSize: '18px', fontWeight: 'bold' }}>
+                      {navInstruction}
+                    </p>
+                    {isDirectMode && (
+                      <p style={{ margin: '8px 0 0 0', fontSize: '14px', opacity: 0.8 }}>
+                        (Simplified routing - walk directly)
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ height: '100%', width: '100%' }}>
+              {currentPos && (
+                <MapDisplay
+                  currentPosition={currentPos}
+                  destination={destination ? { lat: destination.latitude, lng: destination.longitude } : undefined}
+                  routePath={routePath}
+                />
+              )}
             </div>
           )}
 
-          {/* BOTTOM HUD: NAVIGATION INSTRUCTIONS */}
           <div style={{
-            position: 'absolute', 
-            bottom: '40px', left: '20px', right: '20px',
-            background: 'rgba(0,0,0,0.8)', 
-            padding: '15px', 
-            borderRadius: '10px',
-            color: '#fff',
-            textAlign: 'center',
-            zIndex: 10
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            padding: '20px',
+            background: 'linear-gradient(to top, rgba(0,0,0,0.9) 0%, transparent 100%)',
+            zIndex: 15
           }}>
-            <div style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '5px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
-              {isDirectMode && <Compass size={24} color="#ffcc00"/>}
-              {navInstruction}
+            <div style={{ marginBottom: '16px', position: 'relative' }}>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                <input
+                  type="text"
+                  placeholder="Search destination..."
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    if (e.target.value.length > 2) {
+                      searchLocation(e.target.value);
+                    }
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '12px 16px',
+                    fontSize: '16px',
+                    border: 'none',
+                    borderRadius: '12px',
+                    backgroundColor: 'rgba(255,255,255,0.9)',
+                    color: '#000'
+                  }}
+                />
+                <button
+                  onClick={() => searchQuery && searchLocation(searchQuery)}
+                  style={{
+                    padding: '12px 20px',
+                    backgroundColor: '#3b82f6',
+                    border: 'none',
+                    borderRadius: '12px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <Search size={20} />
+                </button>
+              </div>
+
+              {searchResults.length > 0 && (
+                <div style={{
+                  backgroundColor: 'rgba(255,255,255,0.95)',
+                  borderRadius: '12px',
+                  maxHeight: '200px',
+                  overflowY: 'auto',
+                  color: '#000'
+                }}>
+                  {searchResults.map((result, idx) => (
+                    <div
+                      key={idx}
+                      onClick={() => selectDestination(result)}
+                      style={{
+                        padding: '12px 16px',
+                        borderBottom: idx < searchResults.length - 1 ? '1px solid #e5e7eb' : 'none',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px'
+                      }}
+                    >
+                      <MapPin size={16} />
+                      <div>
+                        <p style={{ margin: 0, fontWeight: '600' }}>{result.SEARCHVAL}</p>
+                        <p style={{ margin: 0, fontSize: '12px', color: '#6b7280' }}>
+                          {result.ADDRESS}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-            {destination && (
-                <div style={{ fontSize: '12px', color: '#aaa' }}>
-                Navigating to: {searchQuery}
-                </div>
-            )}
-            {!destination && (
-                <div style={{ fontSize: '12px', color: '#ffcc00' }}>
-                Please search for a destination above
-                </div>
-            )}
+
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button
+                onClick={() => setViewMode(viewMode === 'ar' ? 'map' : 'ar')}
+                style={{
+                  flex: 1,
+                  padding: '14px',
+                  backgroundColor: '#3b82f6',
+                  border: 'none',
+                  borderRadius: '12px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px'
+                }}
+              >
+                {viewMode === 'ar' ? <MapIcon size={20} /> : <Video size={20} />}
+                {viewMode === 'ar' ? 'Map View' : 'AR View'}
+              </button>
+
+              <button
+                onClick={findNearestSafePoint}
+                style={{
+                  padding: '14px 20px',
+                  backgroundColor: '#ef4444',
+                  border: 'none',
+                  borderRadius: '12px',
+                  cursor: 'pointer'
+                }}
+              >
+                <ShieldAlert size={24} />
+              </button>
+            </div>
           </div>
         </>
       )}
