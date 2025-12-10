@@ -1,17 +1,11 @@
 'use client';
 
-// Fix for Leaflet in Next.js
 import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { useEffect } from 'react';
 
-// Fix for missing marker icons
-const iconUrl = 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png';
-const iconRetinaUrl = 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-2x.png';
-const shadowUrl = 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png';
-
-// Setup Icons
+// Fix for missing marker icons in Next.js
 const userIcon = new L.Icon({
     iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-blue.png',
     shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
@@ -30,6 +24,7 @@ const destIcon = new L.Icon({
     shadowSize: [41, 41]
 });
 
+// Component to update map center when user moves
 function MapUpdater({ center }: { center: [number, number] }) {
     const map = useMap();
     useEffect(() => {
@@ -38,54 +33,78 @@ function MapUpdater({ center }: { center: [number, number] }) {
     return null;
 }
 
+interface MapDisplayProps {
+    userLat: number;
+    userLng: number;
+    destLat?: number;
+    destLng?: number;
+    routePath?: [number, number][];
+}
+
 export default function MapDisplay({ 
     userLat, 
     userLng, 
     destLat, 
     destLng,
     routePath = [] 
-}: { 
-    userLat: number, 
-    userLng: number, 
-    destLat?: number, 
-    destLng?: number,
-    routePath?: [number, number][] 
-}) {
+}: MapDisplayProps) {
     // Safety check for invalid coordinates
-    if (!userLat || !userLng) return <div style={{color: 'white'}}>Waiting for GPS...</div>;
+    if (!userLat || !userLng || isNaN(userLat) || isNaN(userLng)) {
+        return (
+            <div className="flex items-center justify-center h-full w-full bg-gray-800 rounded-2xl">
+                <div className="text-center text-white">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
+                    <p className="text-lg">Waiting for GPS...</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
-        <MapContainer 
-            center={[userLat, userLng]} 
-            zoom={15} 
-            style={{ height: '100%', width: '100%', borderRadius: '15px' }}
-        >
-            {/* 🟢 CHANGED: Switched to OpenStreetMap for reliability */}
-            <TileLayer
-                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
-
-            <Marker position={[userLat, userLng]} icon={userIcon}>
-                <Popup>You are here</Popup>
-            </Marker>
-
-            {destLat && destLng && (
-                <Marker position={[destLat, destLng]} icon={destIcon}>
-                    <Popup>Destination</Popup>
-                </Marker>
-            )}
-
-            {routePath && routePath.length > 0 && (
-                <Polyline 
-                    positions={routePath} 
-                    color="#0070f3" 
-                    weight={5} 
-                    opacity={0.7} 
+        <div className="h-full w-full rounded-2xl overflow-hidden shadow-2xl">
+            <MapContainer 
+                center={[userLat, userLng]} 
+                zoom={16} 
+                style={{ height: '100%', width: '100%' }}
+                zoomControl={true}
+            >
+                <TileLayer
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
-            )}
 
-            <MapUpdater center={[userLat, userLng]} />
-        </MapContainer>
+                {/* User position marker */}
+                <Marker position={[userLat, userLng]} icon={userIcon}>
+                    <Popup>
+                        <div className="text-center font-semibold">
+                            📍 You are here
+                        </div>
+                    </Popup>
+                </Marker>
+
+                {/* Destination marker */}
+                {destLat && destLng && !isNaN(destLat) && !isNaN(destLng) && (
+                    <Marker position={[destLat, destLng]} icon={destIcon}>
+                        <Popup>
+                            <div className="text-center font-semibold">
+                                🎯 Destination
+                            </div>
+                        </Popup>
+                    </Marker>
+                )}
+
+                {/* Route path */}
+                {routePath && routePath.length > 0 && (
+                    <Polyline 
+                        positions={routePath} 
+                        color="#2563eb" 
+                        weight={6} 
+                        opacity={0.8} 
+                    />
+                )}
+
+                <MapUpdater center={[userLat, userLng]} />
+            </MapContainer>
+        </div>
     );
 }
