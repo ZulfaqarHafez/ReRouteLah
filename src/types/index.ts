@@ -4,7 +4,8 @@ export interface SavedDestination {
   id: string;
   name: string;
   address: string;
-  icon: string;
+  icon?: string; // Optional - shown in UI
+  category?: string; // Optional - stored in database (same as icon)
   coordinates: [number, number];
 }
 

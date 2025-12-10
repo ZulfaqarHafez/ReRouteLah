@@ -10,6 +10,7 @@ import EmergencyButton from "./EmergencyButton";
 import BusArrivalCard from "./BusArrivalCard";
 import PatientProfilePage from "./PatientProfilePage";
 import NavigationStepCard from "./NavigationStepCard";
+import PairingCodeCard from "./PairingCodeCard";
 import { useVoiceNavigation } from "@/hooks/useVoiceNavigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
@@ -64,32 +65,44 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
     selectedDestination?.coordinates // Destination is dynamic
   );
 
-  // 🟢 MERGED: Centralized location and tracking management
+  // 🟢 MERGED: Start/stop tracking based on navigation view
   useEffect(() => {
     const isNavigatingView = appView === "navigation" || appView === "ar-guide";
 
     if (isNavigatingView) {
         // Start simulation when navigating
         startTracking();
-        // Use the simulated location for the patient's current location
-        setCurrentLocation(simulatedLocation);
     } else {
-        // If not navigating, stop tracking and use real device location
+        // If not navigating, stop tracking
         stopTracking();
-        if ("geolocation" in navigator) {
-            const watchId = navigator.geolocation.watchPosition(
-                (position) => {
-                    setCurrentLocation([position.coords.latitude, position.coords.longitude]);
-                },
-                (error) => {
-                    console.error("GPS Error, using default:", error);
-                },
-                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-            );
-            return () => navigator.geolocation.clearWatch(watchId);
-        }
     }
-  }, [appView, simulatedLocation, startTracking, stopTracking]);
+  }, [appView, startTracking, stopTracking]);
+
+  // 🟢 Update current location from simulated location when navigating
+  useEffect(() => {
+    const isNavigatingView = appView === "navigation" || appView === "ar-guide";
+    if (isNavigatingView && simulatedLocation) {
+        setCurrentLocation(simulatedLocation);
+    }
+  }, [simulatedLocation, appView]);
+
+  // 🟢 Use real device location when not navigating
+  useEffect(() => {
+    const isNavigatingView = appView === "navigation" || appView === "ar-guide";
+    if (!isNavigatingView && "geolocation" in navigator) {
+        const watchId = navigator.geolocation.watchPosition(
+            (position) => {
+                setCurrentLocation([position.coords.latitude, position.coords.longitude]);
+            },
+            (error) => {
+                console.warn("GPS not available:", error.message);
+                // Keep using the last known location or default
+            },
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        );
+        return () => navigator.geolocation.clearWatch(watchId);
+    }
+  }, [appView]);
 
 
   // 🟢 MERGED: Sync navigation status (including deviation) to AuthContext for caregiver view
@@ -577,6 +590,9 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
             </div>
           )}
         </div>
+
+        {/* Pairing Code */}
+        <PairingCodeCard pairingCode={patient.pairingCode} patientName={patient.name} />
 
         {/* Call Guardian */}
         <div className="space-y-3">

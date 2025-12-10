@@ -24,9 +24,9 @@ const LinkPatientDialog = ({ trigger }: LinkPatientDialogProps) => {
   const { linkPatient, getPatientByCode } = useAuth();
   const { toast } = useToast();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     const patient = getPatientByCode(code.toUpperCase());
     if (!patient) {
       toast({
@@ -37,7 +37,7 @@ const LinkPatientDialog = ({ trigger }: LinkPatientDialogProps) => {
       return;
     }
 
-    const success = linkPatient(code.toUpperCase());
+    const success = await linkPatient(code.toUpperCase());
     if (success) {
       toast({
         title: "Traveler linked!",

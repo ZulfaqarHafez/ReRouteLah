@@ -31,6 +31,15 @@ const destIcon = new L.Icon({
     shadowSize: [41, 41]
 });
 
+const caregiverIcon = new L.Icon({
+    iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png',
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+    iconSize: [25, 41],
+    iconAnchor: [12, 41],
+    popupAnchor: [1, -34],
+    shadowSize: [41, 41]
+});
+
 function MapUpdater({ center }: { center: [number, number] }) {
     const map = useMap();
     useEffect(() => {
@@ -39,21 +48,39 @@ function MapUpdater({ center }: { center: [number, number] }) {
     return null;
 }
 
-export default function MapDisplay({ 
-    userLat, 
-    userLng, 
-    destLat, 
+export default function MapDisplay({
+    userLat,
+    userLng,
+    destLat,
     destLng,
-    routePath = [] 
-}: { 
-    userLat: number, 
-    userLng: number, 
-    destLat?: number, 
+    routePath = [],
+    caregiverLat,
+    caregiverLng,
+    showCaregiver = false
+}: {
+    userLat: number,
+    userLng: number,
+    destLat?: number,
     destLng?: number,
-    routePath?: [number, number][] 
+    routePath?: [number, number][],
+    caregiverLat?: number,
+    caregiverLng?: number,
+    showCaregiver?: boolean
 }) {
     // Safety check for invalid coordinates
     if (!userLat || !userLng) return <div style={{color: 'white'}}>Waiting for GPS...</div>;
+
+    // Debug logging for caregiver marker
+    if (showCaregiver) {
+        console.log('🟢 Caregiver Marker Debug:', {
+            showCaregiver,
+            caregiverLat,
+            caregiverLng,
+            hasValidCoords: !!(caregiverLat && caregiverLng),
+            patientLat: userLat,
+            patientLng: userLng
+        });
+    }
 
     return (
         <MapContainer 
@@ -68,7 +95,7 @@ export default function MapDisplay({
             />
 
             <Marker position={[userLat, userLng]} icon={userIcon}>
-                <Popup>You are here</Popup>
+                <Popup>Patient Location</Popup>
             </Marker>
 
             {destLat && destLng && (
@@ -77,12 +104,20 @@ export default function MapDisplay({
                 </Marker>
             )}
 
+            {/* Caregiver's position marker (green) */}
+            {showCaregiver && caregiverLat && caregiverLng && (
+                <Marker position={[caregiverLat, caregiverLng]} icon={caregiverIcon}>
+                    <Popup>Your Location (Caregiver)</Popup>
+                </Marker>
+            )}
+
+            {/* Patient's route path */}
             {routePath && routePath.length > 0 && (
-                <Polyline 
-                    positions={routePath} 
-                    color="#0070f3" 
-                    weight={5} 
-                    opacity={0.7} 
+                <Polyline
+                    positions={routePath}
+                    color="#0070f3"
+                    weight={5}
+                    opacity={0.7}
                 />
             )}
 

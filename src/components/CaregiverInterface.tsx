@@ -51,10 +51,12 @@ const CaregiverInterface = ({
     if ("geolocation" in navigator) {
       const watchId = navigator.geolocation.watchPosition(
         (position) => {
-          setCaregiverLocation([position.coords.latitude, position.coords.longitude]);
+          const newLocation: [number, number] = [position.coords.latitude, position.coords.longitude];
+          console.log('🟢 Caregiver GPS Updated:', newLocation);
+          setCaregiverLocation(newLocation);
         },
         (error) => {
-          console.log("Could not get location, using default:", error);
+          console.warn("Could not get caregiver location, using default:", error.message);
         },
         {
           enableHighAccuracy: true,
@@ -236,11 +238,23 @@ const CaregiverInterface = ({
             {/* 争 CRITICAL: Use the dynamic component here */}
             <div className="h-5/6 shadow-2xl rounded-xl overflow-hidden">
               <DynamicMapDisplay
-                // 🟢 MERGED: Use the focused patient's location or the caregiver's location
-                userLat={patientInFocus?.currentLocation?.[0] ?? caregiverLocation[0]} 
+                // 🟢 Patient's location (blue marker)
+                userLat={patientInFocus?.currentLocation?.[0] ?? caregiverLocation[0]}
                 userLng={patientInFocus?.currentLocation?.[1] ?? caregiverLocation[1]}
+                // 🟢 Destination (red marker)
                 destLat={patientDestination?.coordinates?.[0]}
                 destLng={patientDestination?.coordinates?.[1]}
+                // 🟢 Route path (blue line) - generated below in renderContent
+                routePath={patientInFocus?.isNavigating && patientInFocus?.destination ? [
+                  patientInFocus.currentLocation,
+                  [(patientInFocus.currentLocation[0] + patientInFocus.destination.coordinates[0]) / 2,
+                   (patientInFocus.currentLocation[1] + patientInFocus.destination.coordinates[1]) / 2],
+                  patientInFocus.destination.coordinates
+                ] : []}
+                // 🟢 Caregiver's location (green marker)
+                caregiverLat={caregiverLocation[0]}
+                caregiverLng={caregiverLocation[1]}
+                showCaregiver={true}
               />
             </div>
 

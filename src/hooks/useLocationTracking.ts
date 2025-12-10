@@ -263,6 +263,7 @@ export const useSimulatedLocationTracking = (
   }, [destinationLocation, deviationThreshold, onDeviation, onLocationUpdate]);
 
   const startTracking = useCallback(() => {
+    if (intervalRef.current) return; // Already tracking
     setIsTracking(true);
     // Simulate location updates every 3 seconds
     intervalRef.current = setInterval(simulateMovement, 3000);
