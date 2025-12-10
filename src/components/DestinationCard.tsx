@@ -1,4 +1,4 @@
-import { SavedDestination } from "@/types/app";
+import { SavedDestination } from "@/types";
 import { MapPin, ChevronRight } from "lucide-react";
 
 interface DestinationCardProps {

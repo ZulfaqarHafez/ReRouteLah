@@ -175,6 +175,7 @@ const CaregiverInterface = ({
     // Mark as read in database
     await supabase
       .from('caregiver_notifications')
+      // @ts-ignore - Supabase types not regenerated yet
       .update({ is_read: true })
       .eq('id', notificationId);
 

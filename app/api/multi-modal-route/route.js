@@ -3,7 +3,7 @@
 // Provides fastest path with MRT stations, bus stops, and walking directions
 
 import { NextResponse } from 'next/server';
-import { mrtStations, findNearestStation, findStationsInRadius, haversineDistance, lineColors } from '@/app/data/mrtStations';
+import { mrtStations, findNearestStation, findStationsInRadius, haversineDistance, lineColors } from '../../data/mrtStations';
 
 const LTA_API_KEY = process.env.LTA_API_KEY;
 const ONEMAP_TOKEN = process.env.ONEMAP_TOKEN;

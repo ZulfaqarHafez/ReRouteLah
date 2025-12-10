@@ -13,7 +13,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { SavedDestination, PatientInfo } from "@/types/app";
+import { SavedDestination, PatientInfo } from "@/types";
 import { useAuth } from "@/contexts/AuthContext";
 
 const EMOJI_OPTIONS = ["🏠", "🏢", "🏥", "🏫", "🛒", "🍔", "👵", "👴", "🎮", "⛪", "🏋️", "🌳"];

@@ -66,12 +66,13 @@ const Index = () => {
 if (targetUserData) {
     // Case 1: Target user already exists (Standard switch)
     // Re-run login to update the session based on the existing user's ID
-    login(newRole, targetUserData.name, targetUserData.phone); 
+    const phone = 'phone' in targetUserData ? targetUserData.phone : targetUserData.guardianPhone;
+    login(newRole, targetUserData.name, phone); 
     
   } else {
     // Case 2: Target user does NOT exist (Auto-setup for simulation)
     const name = newRole === 'patient' ? 'Simulated Traveler' : 'Simulated Caregiver';
-    const phone = currentUserData?.phone || '12345678';
+    const phone = currentUserData && 'phone' in currentUserData ? currentUserData.phone : currentUserData?.guardianPhone || '12345678';
     
     // Auto-login/setup the missing user and switch to their view
     // This calls login which will persist the new user data.

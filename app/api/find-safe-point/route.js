@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { dementiaPoints } from '@/app/data/dementiaPoints';
+import { dementiaPoints } from '../../data/dementiaPoints';
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);

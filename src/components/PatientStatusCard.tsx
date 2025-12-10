@@ -1,4 +1,4 @@
-import { PatientInfo, SavedDestination } from "@/types/app";
+import { PatientInfo, SavedDestination } from "@/types";
 import { MapPin, Navigation2, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";

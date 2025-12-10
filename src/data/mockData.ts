@@ -1,4 +1,4 @@
-import { SavedDestination, PatientInfo, CaregiverInfo } from "@/types/app";
+import { SavedDestination, PatientInfo, CaregiverInfo } from "@/types";
 
 export const mockSavedDestinations: SavedDestination[] = [
   {
