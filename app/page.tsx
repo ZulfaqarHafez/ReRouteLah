@@ -1,480 +1,123 @@
-'use client';
+// app/page.tsx (New Content from Index.tsx)
+'use client'; 
+// We need 'use client' because this page uses hooks (useState, useAuth) 
+// and imports client components (like Button and all component interfaces)
 
-import { useState, useEffect, useRef } from 'react';
-import { Navigation, Bus, AlertTriangle, CheckCircle, Search, MapPin, Compass, Map as MapIcon, Video, ShieldAlert } from 'lucide-react';
-import dynamic from 'next/dynamic';
+import { useState } from "react";
+import { MapPin, LogOut } from "lucide-react";
+// Import paths updated to reflect the planned src/types/app.ts location
+import { UserRole, SavedDestination } from "@/types/index"; 
+import { useAuth } from "@/contexts/AuthContext";
+import { Button } from "@/components/ui/button";
+import RoleSelectionPage from "@/components/RoleSelectionPage";
+import PatientSetupPage from "@/components/PatientSetupPage";
+import CaregiverSetupPage from "@/components/CaregiverSetupPage";
+import PatientInterface from "@/components/PatientInterface";
+import CaregiverInterface from "@/components/CaregiverInterface";
 
-// FIXED: Using relative path to match file structure
-const MapDisplay = dynamic(() => import('./components/MapDisplay'), { 
-  ssr: false, 
-  loading: () => <div style={{color: 'white', padding: '20px'}}>Loading Map...</div>
-});
+type SetupStep = "select-role" | "patient-setup" | "caregiver-setup" | "app";
 
-export default function ARNavigation() {
-  // --- STATE SETUP ---
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [permissionGranted, setPermissionGranted] = useState(false);
-  const [heading, setHeading] = useState(0); 
-  const [bearing, setBearing] = useState(0); 
-  const [currentPos, setCurrentPos] = useState<{lat: number, lng: number} | null>(null); 
-  
-  // Navigation States
-  const [navInstruction, setNavInstruction] = useState<string>("Locating...");
-  const [targetCoords, setTargetCoords] = useState<{latitude: number, longitude: number} | null>(null);
-  const [isDirectMode, setIsDirectMode] = useState(false);
-  const [viewMode, setViewMode] = useState<'ar' | 'map'>('ar');
-  const [routePath, setRoutePath] = useState<[number, number][]>([]); 
-  
-  // Dynamic Destination State
-  const [destination, setDestination] = useState<{latitude: number, longitude: number} | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+const Index = () => {
+  // Assuming useAuth, patientData, and caregiverData are correctly typed in AuthContext
+  const { session, patientData, caregiverData, login, logout } = useAuth();
+  const [setupStep, setSetupStep] = useState<SetupStep>(session ? "app" : "select-role");
+  const [patientDestination, setPatientDestination] = useState<SavedDestination | null>(null);
 
-  // Bus Data States
-  const [busService, setBusService] = useState<string>('Scanning...');
-  const [busLoad, setBusLoad] = useState<string | null>(null);
-  const [nextBusTime, setNextBusTime] = useState('');
-  const [loadingBus, setLoadingBus] = useState(false);
-
-  // --- CONFIG ---
-  const DEMO_BUS_STOP = '83139'; 
-
-  // --- HELPER: Calculate Bearing (Math for Arrow) ---
-  const calculateBearing = (startLat: number, startLng: number, destLat: number, destLng: number) => {
-    const toRad = (deg: number) => (deg * Math.PI) / 180;
-    const toDeg = (rad: number) => (rad * 180) / Math.PI;
-
-    const startLatRad = toRad(startLat);
-    const startLngRad = toRad(startLng);
-    const destLatRad = toRad(destLat);
-    const destLngRad = toRad(destLng);
-
-    const y = Math.sin(destLngRad - startLngRad) * Math.cos(destLatRad);
-    const x = Math.cos(startLatRad) * Math.sin(destLatRad) -
-              Math.sin(startLatRad) * Math.cos(destLatRad) * Math.cos(destLngRad - startLngRad);
-    
-    let brng = toDeg(Math.atan2(y, x));
-    return (brng + 360) % 360;
-  };
-
-  // --- 1. SENSOR & CAMERA LOGIC ---
-  const startExperience = async () => {
-    // A. Request Camera
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'environment' } 
-      });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-    } catch (err) {
-      console.error("Camera Error:", err);
-    }
-
-    // B. Request Compass
-    // @ts-ignore
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-      try {
-        // @ts-ignore
-        const response = await DeviceOrientationEvent.requestPermission();
-        if (response === 'granted') {
-          window.addEventListener('deviceorientation', handleOrientation);
-          setPermissionGranted(true);
-        }
-      } catch (error) { console.error(error); }
+  const handleRoleSelect = (role: UserRole) => {
+    if (role === "patient") {
+      setSetupStep("patient-setup");
     } else {
-      // @ts-ignore
-      window.addEventListener('deviceorientationabsolute', handleOrientation); 
-      window.addEventListener('deviceorientation', handleOrientation); 
-      setPermissionGranted(true);
+      setSetupStep("caregiver-setup");
     }
+  };
 
-    // C. Start GPS & Navigation Logic
-    if ('geolocation' in navigator) {
-      navigator.geolocation.watchPosition(
-        (position) => {
-          const { latitude, longitude } = position.coords;
-          setCurrentPos({ lat: latitude, lng: longitude }); // Update Map Pos
-          
-          if (destination) {
-            const directBearing = calculateBearing(latitude, longitude, destination.latitude, destination.longitude);
-            if (isDirectMode || !targetCoords) {
-               setBearing(directBearing);
-            }
-            updateNavigation(latitude, longitude, destination);
-          }
-        },
-        (error) => console.error("GPS Error", error),
-        { enableHighAccuracy: true }
+  const handlePatientSetupComplete = (name: string, phone: string) => {
+    login("patient", name, phone);
+    setSetupStep("app");
+  };
+
+  const handleCaregiverSetupComplete = (name: string, phone: string) => {
+    login("caregiver", name, phone);
+    setSetupStep("app");
+  };
+
+  const handleLogout = () => {
+    logout();
+    setSetupStep("select-role");
+  };
+
+  const handleNavigationStart = (destination: SavedDestination) => {
+    setPatientDestination(destination);
+  };
+
+  // Show setup screens if not logged in
+  if (!session || setupStep !== "app") {
+    if (setupStep === "select-role") {
+      return <RoleSelectionPage onSelectRole={handleRoleSelect} />;
+    }
+    if (setupStep === "patient-setup") {
+      return (
+        <PatientSetupPage
+          onBack={() => setSetupStep("select-role")}
+          onComplete={handlePatientSetupComplete}
+        />
       );
     }
-
-    // D. Start Bus Polling
-    fetchBusData();
-    setInterval(fetchBusData, 30000); 
-  };
-
-  const handleOrientation = (event: any) => {
-    let compass = event.webkitCompassHeading || Math.abs(event.alpha - 360);
-    setHeading(compass);
-  };
-
-  // --- 2. NAVIGATION API INTEGRATION ---
-  const updateNavigation = async (currentLat: number, currentLng: number, dest: {latitude: number, longitude: number}) => {
-    try {
-      const res = await fetch(
-        `/api/navigation?startLat=${currentLat}&startLng=${currentLng}&destLat=${dest.latitude}&destLng=${dest.longitude}`
+    if (setupStep === "caregiver-setup") {
+      return (
+        <CaregiverSetupPage
+          onBack={() => setSetupStep("select-role")}
+          onComplete={handleCaregiverSetupComplete}
+        />
       );
-      const data = await res.json();
-
-      if (data.useFallback || data.error) {
-        setIsDirectMode(true);
-        setNavInstruction("Direct Compass Mode");
-        setTargetCoords(null); 
-        
-        // Fallback - Draw a straight line if route fails so map isn't empty
-        setRoutePath([[currentLat, currentLng], [dest.latitude, dest.longitude]]);
-        
-      } else if (data.latitude) {
-        setIsDirectMode(false);
-        setTargetCoords({ latitude: data.latitude, longitude: data.longitude });
-        
-        // Only update instruction if we don't have a specific bus instruction yet
-        if (!navInstruction.includes("Take Bus")) {
-            setNavInstruction(data.instruction); 
-        }
-        
-        // Save the route geometry
-        if (data.path) {
-          setRoutePath(data.path);
-        }
-
-        const turnBearing = calculateBearing(currentLat, currentLng, data.latitude, data.longitude);
-        setBearing(turnBearing);
-      }
-    } catch (err) {
-      console.error("Nav Error", err);
-      setIsDirectMode(true);
-      // Fallback straight line
-      setRoutePath([[currentLat, currentLng], [dest.latitude, dest.longitude]]);
-    }
-  };
-
-  // --- SEARCH ---
-  const handleSearch = async (e: any) => {
-    e.preventDefault();
-    if (!searchQuery) return;
-    setIsSearching(true);
-    try {
-      const res = await fetch(`/api/search?q=${searchQuery}`);
-      const data = await res.json();
-      setSearchResults(data.results || []);
-    } catch (error) {
-      console.error("Search failed", error);
-    }
-    setIsSearching(false);
-  };
-
-  const selectLocation = (result: any) => {
-    const lat = parseFloat(result.LATITUDE);
-    const lng = parseFloat(result.LONGITUDE);
-    setDestination({ latitude: lat, longitude: lng });
-    setSearchResults([]); 
-    setSearchQuery(result.SEARCHVAL); 
-    setNavInstruction(`Navigating to ${result.SEARCHVAL}...`);
-    
-    // Check for Bus Route
-    findBestBus(lat, lng);
-  };
-
-  // --- 🟢 BUS ROUTE PLANNER LOGIC ---
-  const findBestBus = async (destLat: number, destLng: number) => {
-    if (!currentPos) return;
-    
-    try {
-        const res = await fetch(`/api/route-planner?startLat=${currentPos.lat}&startLng=${currentPos.lng}&destLat=${destLat}&destLng=${destLng}`);
-        const data = await res.json();
-        
-        if (data.busNumber) {
-            setNavInstruction(`Take Bus ${data.busNumber} from ${data.boardStop}`);
-            setBusService(data.busNumber); // Focus HUD on this bus
-        }
-    } catch (e) {
-        console.error("Bus Route Error", e);
     }
   }
 
-  // --- 🟢 EMERGENCY SAFE REROUTE ---
-  const handleSafeReroute = () => {
-    if (!currentPos) {
-        alert("Waiting for GPS signal...");
-        return;
-    }
-    
-    setNavInstruction("Finding nearest Safe Point...");
-    
-    fetch(`/api/find-safe-point?lat=${currentPos.lat}&lng=${currentPos.lng}`)
-      .then(res => res.json())
-      .then(data => {
-         if(data.error) {
-             alert("Could not find safe point");
-             return;
-         }
-         
-         setDestination({ latitude: data.lat, longitude: data.lng });
-         setSearchQuery(data.name); 
-         setNavInstruction(`Rerouting to Safe Point: ${data.name}`);
-         
-         updateNavigation(currentPos.lat, currentPos.lng, { latitude: data.lat, longitude: data.lng });
-         
-         // Also check if there's a bus to get there!
-         findBestBus(data.lat, data.lng);
-      })
-      .catch(err => console.error(err));
-  };
-
-  // --- 3. LTA BUS API INTEGRATION ---
-  const fetchBusData = async () => {
-    setLoadingBus(true);
-    try {
-      const res = await fetch(`/api/lta/bus-arrival?code=${DEMO_BUS_STOP}`);
-      const data = await res.json();
-      
-      // If we are looking for a specific bus (from route planner), find that one
-      // Otherwise, default to the first one arriving
-      let arrivingBus = null;
-      
-      if (busService !== 'Scanning...' && busService !== 'No Svc') {
-          arrivingBus = data.Services?.find((s: any) => s.ServiceNo === busService);
-      }
-      
-      // Fallback if specific bus not found or not set
-      if (!arrivingBus && data.Services && data.Services.length > 0) {
-          arrivingBus = data.Services[0];
-      }
-      
-      if (arrivingBus && arrivingBus.NextBus) {
-        setBusService(arrivingBus.ServiceNo);
-        setBusLoad(arrivingBus.NextBus.Load); 
-        const arrival = new Date(arrivingBus.NextBus.EstimatedArrival);
-        const now = new Date();
-        const diffMs = arrival.getTime() - now.getTime();
-        const diffMins = Math.ceil(diffMs / 60000);
-        setNextBusTime(diffMins > 0 ? `${diffMins} min` : 'Arr');
-        
-        if (arrivingBus.NextBus.Load === 'LSD' && navigator.vibrate) {
-          navigator.vibrate([200, 100, 200]); 
-        }
-      } else {
-        // Only set to No Svc if we were looking for something specific and it's gone
-        if (busService !== 'Scanning...') {
-             setNextBusTime("--");
-        }
-      }
-    } catch (err) {
-      console.error("Bus fetch failed", err);
-    }
-    setLoadingBus(false);
-  };
-
-  // --- 4. UI HELPERS ---
-  const getStatusColor = () => {
-    if (busLoad === 'SEA') return 'rgba(0, 255, 0, 0.6)'; 
-    if (busLoad === 'SDA') return 'rgba(255, 165, 0, 0.6)'; 
-    if (busLoad === 'LSD') return 'rgba(255, 0, 0, 0.7)'; 
-    return 'rgba(0,0,0,0.5)'; 
-  };
-  const getStatusText = () => {
-    if (busLoad === 'SEA') return 'Space Available - OK';
-    if (busLoad === 'SDA') return 'Standing Only';
-    if (busLoad === 'LSD') return 'CROWDED - WAIT';
-    return 'Scanning...';
-  };
-
-  // --- RENDER ---
+  // Main app interface
   return (
-    <div style={{ position: 'relative', height: '100vh', background: 'black', overflow: 'hidden' }}>
-      
-      {/* VIEW MODE TOGGLE BUTTON */}
-      <div style={{ position: 'absolute', top: '150px', right: '20px', zIndex: 50 }}>
-        <button 
-          onClick={() => setViewMode(viewMode === 'ar' ? 'map' : 'ar')}
-          style={{ 
-            background: 'white', border: 'none', borderRadius: '50%', width: '50px', height: '50px',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 10px rgba(0,0,0,0.3)'
-          }}
-        >
-          {viewMode === 'ar' ? <MapIcon color="black" /> : <Video color="black" />}
-        </button>
-      </div>
-
-      {/* 🟢 NEW: EMERGENCY BUTTON (Visible always) */}
-      <div style={{ position: 'absolute', bottom: '150px', right: '20px', zIndex: 50 }}>
-        <button 
-          onClick={handleSafeReroute}
-          style={{ 
-            background: '#ff4444', color: 'white', border: 'none', borderRadius: '50%', width: '60px', height: '60px',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 15px rgba(255,0,0,0.4)',
-            animation: 'pulse 2s infinite'
-          }}
-        >
-          <ShieldAlert size={32} />
-        </button>
-      </div>
-
-      {/* 1. VIEW: AR CAMERA */}
-      <div style={{ 
-        position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', 
-        visibility: viewMode === 'ar' ? 'visible' : 'hidden' 
-      }}>
-        <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-      </div>
-
-      {/* 2. VIEW: MAP DISPLAY */}
-      {viewMode === 'map' && currentPos && (
-        <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 5, background: '#eee' }}>
-          <MapDisplay 
-            userLat={currentPos.lat} 
-            userLng={currentPos.lng} 
-            destLat={destination?.latitude}
-            destLng={destination?.longitude}
-            routePath={routePath} 
-          />
+    <div className="min-h-screen">
+      {/* Header */}
+      <header className="fixed top-0 left-0 right-0 z-50 bg-card/80 backdrop-blur-lg border-b border-border">
+        <div className="flex items-center justify-between px-4 py-3">
+          <div className="flex items-center gap-2">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg gradient-primary">
+              <MapPin className="h-5 w-5 text-primary-foreground" />
+            </div>
+            <div>
+              <span className="text-lg font-bold text-foreground">ReRouteLah</span>
+              <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
+                {session?.role === "patient" ? "Traveler" : "Caregiver"}
+              </span>
+            </div>
+          </div>
+          <Button variant="ghost" size="sm" onClick={handleLogout} className="gap-1">
+            <LogOut className="h-4 w-4" />
+            <span className="hidden sm:inline">Logout</span>
+          </Button>
         </div>
-      )}
+      </header>
 
-      {/* SEARCH OVERLAY (Always visible) */}
-      <div style={{ 
-          position: 'absolute', top: '10px', left: '10px', right: '10px', 
-          zIndex: 60, display: 'flex', flexDirection: 'column', gap: '5px' 
-      }}>
-        <form onSubmit={handleSearch} style={{ display: 'flex', gap: '5px' }}>
-            <input 
-                type="text" 
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search destination..."
-                style={{ 
-                    flex: 1, padding: '12px', borderRadius: '8px', border: 'none', 
-                    background: 'rgba(255,255,255,0.9)', color: '#000' 
-                }}
-            />
-            <button type="submit" style={{ 
-                padding: '12px', borderRadius: '8px', border: 'none', 
-                background: '#0070f3', color: 'white' 
-            }}>
-                <Search size={20} />
-            </button>
-        </form>
-        {/* Results... */}
-        {searchResults.length > 0 && (
-            <div style={{ 
-                background: 'rgba(255,255,255,0.95)', borderRadius: '8px', 
-                maxHeight: '200px', overflowY: 'auto', padding: '5px' 
-            }}>
-                {searchResults.map((res, idx) => (
-                    <div 
-                        key={idx} 
-                        onClick={() => selectLocation(res)}
-                        style={{ 
-                            padding: '10px', borderBottom: '1px solid #eee', 
-                            color: 'black', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px'
-                        }}
-                    >
-                        <MapPin size={16} />
-                        <div>
-                            <div style={{ fontWeight: 'bold' }}>{res.SEARCHVAL}</div>
-                            <div style={{ fontSize: '12px', color: '#555' }}>{res.ADDRESS}</div>
-                        </div>
-                    </div>
-                ))}
-            </div>
+      {/* Main Content */}
+      <main className="pt-16">
+        {session?.role === "patient" && patientData ? (
+          <PatientInterface 
+            patient={patientData} 
+            onNavigationStart={handleNavigationStart}
+          />
+        ) : session?.role === "caregiver" && caregiverData ? (
+          <CaregiverInterface 
+            caregiver={caregiverData}
+            activePatient={caregiverData.patients[0] || null}
+            patientDestination={patientDestination}
+          />
+        ) : (
+          <div className="flex items-center justify-center h-[80vh]">
+            <p className="text-muted-foreground">Loading...</p>
+          </div>
         )}
-      </div>
-
-      {!permissionGranted ? (
-        <button 
-          onClick={startExperience} 
-          style={{ 
-            position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', 
-            padding: '20px 40px', fontSize: '20px', zIndex: 50, 
-            background: '#0070f3', color: 'white', border: 'none', borderRadius: '12px'
-          }}>
-          Start AR Navigation
-        </button>
-      ) : (
-        <>
-          {/* TOP HUD: BUS SAFETY */}
-          <div style={{
-            position: 'absolute', 
-            top: '80px', left: '20px', right: '20px',
-            background: getStatusColor(), 
-            border: busLoad === 'LSD' ? '4px solid red' : 'none',
-            padding: '20px', 
-            borderRadius: '15px',
-            color: 'white', 
-            display: 'flex', 
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            transition: 'background 0.5s',
-            zIndex: 10
-          }}>
-            <div>
-              <div style={{ fontSize: '14px', opacity: 0.8 }}>Next Bus: {busService}</div>
-              <div style={{ fontSize: '24px', fontWeight: 'bold' }}>{nextBusTime}</div>
-              <div style={{ fontSize: '18px', fontWeight: 'bold', marginTop: '5px' }}>
-                {getStatusText()}
-              </div>
-            </div>
-            
-            <div>
-              {busLoad === 'SEA' && <CheckCircle size={48} />}
-              {busLoad === 'LSD' && <AlertTriangle size={48} />}
-              {busLoad === null && <Bus size={48} />}
-            </div>
-          </div>
-
-          {/* MIDDLE: AR ARROW (Only in AR Mode) */}
-          {viewMode === 'ar' && (
-            <div style={{
-                position: 'absolute', top: '50%', left: '50%',
-                transform: `translate(-50%, -50%) rotate(${(bearing - heading + 360) % 360}deg)`,
-                transition: 'transform 0.1s ease-out',
-                zIndex: 5
-            }}>
-                <Navigation size={120} color={busLoad === 'LSD' ? 'red' : '#00ff00'} fill={busLoad === 'LSD' ? 'red' : '#00ff00'} />
-            </div>
-          )}
-
-          {/* BOTTOM HUD: NAVIGATION INSTRUCTIONS */}
-          <div style={{
-            position: 'absolute', 
-            bottom: '40px', left: '20px', right: '20px',
-            background: 'rgba(0,0,0,0.8)', 
-            padding: '15px', 
-            borderRadius: '10px',
-            color: '#fff',
-            textAlign: 'center',
-            zIndex: 10
-          }}>
-            <div style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '5px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
-              {isDirectMode && <Compass size={24} color="#ffcc00"/>}
-              {navInstruction}
-            </div>
-            {destination && (
-                <div style={{ fontSize: '12px', color: '#aaa' }}>
-                Navigating to: {searchQuery}
-                </div>
-            )}
-            {!destination && (
-                <div style={{ fontSize: '12px', color: '#ffcc00' }}>
-                Please search for a destination above
-                </div>
-            )}
-          </div>
-        </>
-      )}
+      </main>
     </div>
   );
-}
+};
+
+export default Index;
