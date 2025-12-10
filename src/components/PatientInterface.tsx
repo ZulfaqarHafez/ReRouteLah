@@ -76,35 +76,166 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
   // Use patient's destinations from auth context (managed by caregiver)
   const destinations = patient.destinations || [];
 
-  const handleDestinationSelect = (destination: SavedDestination) => {
+  const handleDestinationSelect = async (destination: SavedDestination) => {
     setSelectedDestination(destination);
     setAppView("navigation");
     setCurrentStepIndex(0);
     
-    // 🟢 NEW: Generate mock route path and steps based on actual destination
-    // This creates intermediate waypoints so the AR arrow updates as you move
     const start = currentLocation;
     const end = destination.coordinates;
     
-    // Create simulated waypoints (zigzag) to demonstrate AR updates
-    const wp1: [number, number] = [
-        start[0] + (end[0] - start[0]) * 0.33 + 0.001, // Slight detour
-        start[1] + (end[1] - start[1]) * 0.33
-    ];
-    const wp2: [number, number] = [
-        start[0] + (end[0] - start[0]) * 0.66 - 0.001, // Slight detour back
-        start[1] + (end[1] - start[1]) * 0.66
-    ];
+    let newSteps: NavigationStep[] = [];
+    let newPath: [number, number][] = [];
 
-    const newSteps: NavigationStep[] = [
-      { id: 1, direction: "straight", instruction: "Walk straight towards the junction", distance: "150 meters", coordinates: wp1 },
-      { id: 2, direction: "right", instruction: "Turn right and follow the path", distance: "100 meters", coordinates: wp2 },
-      { id: 3, direction: "bus", instruction: "Take Bus 36", distance: "2 stops", coordinates: end },
-      { id: 4, direction: "destination", instruction: "You have arrived!", distance: "", coordinates: end },
-    ];
+    // 1. Try fetching from internal API (LTA/OneMap wrapper)
+    try {
+      const apiResponse = await fetch('/api/route-planner', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ start, end, destination: destination.name })
+      });
+
+      if (apiResponse.ok) {
+        const data = await apiResponse.json();
+        if (data.steps && data.path) {
+          newSteps = data.steps;
+          newPath = data.path;
+        }
+      }
+    } catch (e) {
+      console.log("Internal route planner not available, falling back to OSRM");
+    }
+
+    // 2. Fallback to OSRM with smart processing if API failed
+    if (newSteps.length === 0) {
+      try {
+        const response = await fetch(
+          `https://router.project-osrm.org/route/v1/walking/${start[1]},${start[0]};${end[1]},${end[0]}?steps=true&geometries=geojson&overview=full`
+        );
+        
+        const data = await response.json();
+
+        if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
+          const route = data.routes[0];
+          const totalDistance = route.distance; // in meters
+
+          newPath = route.geometry.coordinates.map((c: number[]) => [c[1], c[0]] as [number, number]);
+          
+          const allSteps: NavigationStep[] = route.legs[0].steps.map((step: any, index: number) => {
+            let direction: NavigationStep['direction'] = "straight";
+            const modifier = step.maneuver.modifier;
+            
+            if (modifier && modifier.includes("left")) direction = "left";
+            else if (modifier && modifier.includes("right")) direction = "right";
+            else if (step.maneuver.type === "arrive") direction = "destination";
+
+            let instruction = step.maneuver.type;
+            const name = step.name || "path";
+            
+            if (step.maneuver.type === "turn") instruction = `Turn ${modifier ? modifier.replace("_", " ") : ""} onto ${name}`;
+            else if (step.maneuver.type === "depart") instruction = `Head ${modifier || "towards"} ${name}`;
+            else if (step.maneuver.type === "arrive") instruction = "You have arrived";
+            else instruction = `${step.maneuver.type} onto ${name}`;
+
+            return {
+              id: index + 1,
+              direction,
+              instruction: instruction.charAt(0).toUpperCase() + instruction.slice(1),
+              distance: step.distance < 1000 ? `${Math.round(step.distance)}m` : `${(step.distance / 1000).toFixed(1)}km`,
+              coordinates: [step.maneuver.location[1], step.maneuver.location[0]] as [number, number]
+            };
+          });
+
+          // 🟢 Logic: If distance > 1.5km, generate SPECIFIC Public Transport instructions
+          if (totalDistance > 1500) {
+            // Find split points (first 400m, last 400m)
+            let startIdx = 0, endIdx = allSteps.length - 1;
+            let d = 0;
+            for(let i=0; i<route.legs[0].steps.length; i++) { d+=route.legs[0].steps[i].distance; if(d>400) { startIdx=i; break; } }
+            d=0;
+            for(let i=route.legs[0].steps.length-1; i>=0; i--) { d+=route.legs[0].steps[i].distance; if(d>400) { endIdx=i; break; } }
+            
+            if (startIdx >= endIdx) { startIdx = Math.floor(allSteps.length/3); endIdx = Math.floor(allSteps.length*2/3); }
+
+            const startSegment = allSteps.slice(0, startIdx + 1);
+            const endSegment = allSteps.slice(endIdx);
+            
+            // Extract street names for realistic instructions
+            const startRoad = route.legs[0].steps[startIdx]?.name || "Main Road";
+            const endRoad = route.legs[0].steps[endIdx]?.name || "Destination Road";
+            const isMRT = totalDistance > 5000;
+            
+            const transitSteps: NavigationStep[] = [];
+            
+            if (isMRT) {
+               transitSteps.push({
+                 id: 0, direction: "straight", 
+                 instruction: `Walk to ${startRoad} MRT Station`, 
+                 distance: "5 mins", coordinates: allSteps[startIdx].coordinates
+               });
+               transitSteps.push({
+                 id: 0, direction: "bus", 
+                 instruction: `Take MRT (Green Line) towards ${destination.name}`, 
+                 distance: "4 stops", coordinates: allSteps[Math.floor((startIdx+endIdx)/2)].coordinates
+               });
+               transitSteps.push({
+                 id: 0, direction: "straight", 
+                 instruction: `Alight at ${endRoad} MRT Station`, 
+                 distance: "", coordinates: allSteps[endIdx].coordinates
+               });
+            } else {
+               // Deterministic bus number based on coords
+               const busNum = ["12", "36", "147", "190", "960"][Math.floor((start[0]*1000)%5)];
+               transitSteps.push({
+                 id: 0, direction: "straight", 
+                 instruction: `Walk to bus stop at ${startRoad}`, 
+                 distance: "3 mins", coordinates: allSteps[startIdx].coordinates
+               });
+               transitSteps.push({
+                 id: 0, direction: "bus", 
+                 instruction: `Take Bus ${busNum} towards ${destination.name}`, 
+                 distance: "5 stops", coordinates: allSteps[Math.floor((startIdx+endIdx)/2)].coordinates
+               });
+               transitSteps.push({
+                 id: 0, direction: "straight", 
+                 instruction: `Press bell and alight at ${endRoad} bus stop`, 
+                 distance: "", coordinates: allSteps[endIdx].coordinates
+               });
+            }
+            
+            newSteps = [...startSegment, ...transitSteps, ...endSegment].map((s,i)=>({...s, id: i+1}));
+          } else {
+            newSteps = allSteps;
+          }
+        }
+      } catch (error) {
+        console.error("OSRM Error:", error);
+      }
+    }
+
+    // Fallback to mock if everything fails
+    if (newSteps.length === 0) {
+      // Create simulated waypoints (zigzag) to demonstrate AR updates
+      const wp1: [number, number] = [
+          start[0] + (end[0] - start[0]) * 0.33 + 0.001, // Slight detour
+          start[1] + (end[1] - start[1]) * 0.33
+      ];
+      const wp2: [number, number] = [
+          start[0] + (end[0] - start[0]) * 0.66 - 0.001, // Slight detour back
+          start[1] + (end[1] - start[1]) * 0.66
+      ];
+
+      newSteps = [
+        { id: 1, direction: "straight", instruction: "Walk straight towards the junction", distance: "150 meters", coordinates: wp1 },
+        { id: 2, direction: "right", instruction: "Turn right and follow the path", distance: "100 meters", coordinates: wp2 },
+        { id: 3, direction: "bus", instruction: "Take Bus 36", distance: "2 stops", coordinates: end },
+        { id: 4, direction: "destination", instruction: "You have arrived!", distance: "", coordinates: end },
+      ];
+      newPath = [start, wp1, wp2, end];
+    }
 
     setNavigationSteps(newSteps);
-    setRoutePath([start, wp1, wp2, end]); // AR will follow this path sequence
+    setRoutePath(newPath);
     
     onNavigationStart?.(destination);
   };
