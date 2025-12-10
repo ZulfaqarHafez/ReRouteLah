@@ -15,19 +15,37 @@ export default function ARNavigation({ currentLocation, routePath, onClose }: AR
   const [heading, setHeading] = useState<number>(0);
   const [error, setError] = useState<string>('');
   const [nextWaypoint, setNextWaypoint] = useState<[number, number] | null>(null);
+  const [permissionGranted, setPermissionGranted] = useState<boolean>(false);
+  const [needsPermission, setNeedsPermission] = useState<boolean>(false);
+
+  // Helper: Calculate Haversine distance between two lat/lng points
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371e3; // Earth radius in meters
+    const φ1 = lat1 * Math.PI / 180;
+    const φ2 = lat2 * Math.PI / 180;
+    const Δφ = (lat2 - lat1) * Math.PI / 180;
+    const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+              Math.cos(φ1) * Math.cos(φ2) *
+              Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return R * c; // Distance in meters
+  };
 
   // 1. Calculate Next Waypoint based on current location
   useEffect(() => {
     if (!routePath || routePath.length === 0) return;
 
-    // Find the closest point on the route to the user
+    // Find the closest point on the route using proper Haversine distance
     let minDistance = Infinity;
     let closestIndex = 0;
 
     routePath.forEach((point, index) => {
-      const dist = Math.sqrt(
-        Math.pow(point[0] - currentLocation[0], 2) + 
-        Math.pow(point[1] - currentLocation[1], 2)
+      const dist = calculateDistance(
+        currentLocation[0], currentLocation[1],
+        point[0], point[1]
       );
       if (dist < minDistance) {
         minDistance = dist;
@@ -36,7 +54,7 @@ export default function ARNavigation({ currentLocation, routePath, onClose }: AR
     });
 
     // Target the next point in the sequence (or the end if we are close to the end)
-    // If we are at index i, aim for i+1.
+    // Skip ahead by at least 1 point to avoid targeting points behind us
     const targetIndex = Math.min(closestIndex + 1, routePath.length - 1);
     setNextWaypoint(routePath[targetIndex]);
 
@@ -68,48 +86,68 @@ export default function ARNavigation({ currentLocation, routePath, onClose }: AR
     };
   }, []);
 
-  // 3. Handle Device Orientation
+  // 3. Handle Device Orientation (Gyroscope/Compass)
   useEffect(() => {
     const handleOrientation = (event: DeviceOrientationEvent) => {
       let compass = 0;
       // @ts-ignore - webkitCompassHeading is iOS specific
       if (event.webkitCompassHeading) {
-        // @ts-ignore
+        // @ts-ignore - iOS provides true compass heading directly
         compass = event.webkitCompassHeading;
-      } else if (event.alpha) {
-        // Standard: alpha=0 is North, increasing anti-clockwise.
-        // So compass heading = 360 - alpha.
+      } else if (event.alpha !== null) {
+        // Android/Standard: alpha=0 is North, increases counter-clockwise
+        // Convert to compass heading (0° = North, clockwise)
         compass = 360 - event.alpha;
       }
       setHeading(compass);
     };
 
-    // Request permission for iOS 13+
-    const requestAccess = async () => {
-        // @ts-ignore
-        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-            try {
-                // @ts-ignore
-                const response = await DeviceOrientationEvent.requestPermission();
-                if (response === 'granted') {
-                    window.addEventListener('deviceorientation', handleOrientation);
-                } else {
-                    setError('Orientation permission denied');
-                }
-            } catch (e) {
-                console.error(e);
-            }
-        } else {
-            window.addEventListener('deviceorientation', handleOrientation);
-        }
-    };
-
-    requestAccess();
+    // Check if permission is needed (iOS 13+)
+    // @ts-ignore
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      setNeedsPermission(true);
+      setPermissionGranted(false);
+    } else {
+      // Android or older iOS - no permission needed
+      window.addEventListener('deviceorientation', handleOrientation);
+      setPermissionGranted(true);
+    }
 
     return () => {
       window.removeEventListener('deviceorientation', handleOrientation);
     };
   }, []);
+
+  // Handle iOS orientation permission request (must be triggered by user action)
+  const requestOrientationPermission = async () => {
+    try {
+      // @ts-ignore
+      const response = await DeviceOrientationEvent.requestPermission();
+      if (response === 'granted') {
+        setPermissionGranted(true);
+        setNeedsPermission(false);
+
+        // Now add the event listener
+        const handleOrientation = (event: DeviceOrientationEvent) => {
+          let compass = 0;
+          // @ts-ignore
+          if (event.webkitCompassHeading) {
+            // @ts-ignore
+            compass = event.webkitCompassHeading;
+          } else if (event.alpha !== null) {
+            compass = 360 - event.alpha;
+          }
+          setHeading(compass);
+        };
+        window.addEventListener('deviceorientation', handleOrientation);
+      } else {
+        setError('Compass permission denied. AR navigation requires device orientation access.');
+      }
+    } catch (e) {
+      console.error('Permission request error:', e);
+      setError('Could not access device orientation sensor.');
+    }
+  };
 
   // 4. Calculate Bearing
   const calculateBearing = (startLat: number, startLng: number, destLat: number, destLng: number) => {
@@ -181,11 +219,28 @@ export default function ARNavigation({ currentLocation, routePath, onClose }: AR
             </Button>
         </div>
 
+        {/* iOS Permission Request */}
+        {needsPermission && !permissionGranted && !error && (
+            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white/95 backdrop-blur-md p-6 rounded-2xl text-center max-w-sm pointer-events-auto shadow-2xl">
+                <div className="text-4xl mb-4">🧭</div>
+                <p className="font-bold text-lg mb-2 text-gray-900">Enable Compass</p>
+                <p className="text-sm text-gray-600 mb-4">
+                    AR navigation needs access to your device's compass to show you the right direction.
+                </p>
+                <Button
+                    onClick={requestOrientationPermission}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold h-12"
+                >
+                    Enable Compass
+                </Button>
+            </div>
+        )}
+
         {/* Error Message */}
         {error && (
-            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-red-500/90 text-white p-6 rounded-xl text-center max-w-xs">
-                <p className="font-bold mb-2">Camera Error</p>
-                <p>{error}</p>
+            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-red-500/90 text-white p-6 rounded-xl text-center max-w-xs pointer-events-auto">
+                <p className="font-bold mb-2">Sensor Error</p>
+                <p className="text-sm">{error}</p>
                 <Button onClick={onClose} className="mt-4 w-full bg-white text-red-500 hover:bg-gray-100">
                     Close AR
                 </Button>
