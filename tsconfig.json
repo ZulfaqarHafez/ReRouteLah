@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2017",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
@@ -20,14 +24,28 @@
     ],
     "paths": {
       // ⚠️ IMPORTANT: Change the base alias to look inside the new 'src' directory
-      "@/*": ["./src/*"],
+      "@/*": [
+        "./src/*"
+      ],
       // Keep old aliases pointing to 'src' subdirectories for shadcn compatibility
-      "@/components/*": ["./src/components/*"],
-      "@/lib/*": ["./src/lib/*"],
-      "@/hooks/*": ["./src/hooks/*"],
-      "@/contexts/*": ["./src/contexts/*"],
-      "@/pages/*": ["./src/pages/*"],
-      "@/utils": ["./src/lib/utils"]
+      "@/components/*": [
+        "./src/components/*"
+      ],
+      "@/lib/*": [
+        "./src/lib/*"
+      ],
+      "@/hooks/*": [
+        "./src/hooks/*"
+      ],
+      "@/contexts/*": [
+        "./src/contexts/*"
+      ],
+      "@/pages/*": [
+        "./src/pages/*"
+      ],
+      "@/utils": [
+        "./src/lib/utils"
+      ]
     }
   },
   "include": [
@@ -36,7 +54,10 @@
     "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
-    "**/*.mts"
-, "tailwind.config.js"  ],
-  "exclude": ["node_modules"]
+    "**/*.mts",
+    "tailwind.config.js"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }
