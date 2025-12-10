@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { AuthSession, UserRole, PatientInfo, CaregiverInfo, SavedDestination } from '@/types/app';
+import { AuthSession, UserRole, PatientInfo, CaregiverInfo, SavedDestination } from '@/types';
 import { mockSavedDestinations } from '@/data/mockData';
 
 interface AuthContextType {
@@ -9,12 +9,9 @@ interface AuthContextType {
   patientData: PatientInfo | null;
   caregiverData: CaregiverInfo | null;
   allPatients: PatientInfo[];
-  login: (role: UserRole, name: string, phone?: string) => void;
+  login: (role: UserRole, name: string, phone?: string, pairingCode?: string) => void;
   logout: () => void;
-  generatePairingCode: () => string;
-  linkPatient: (pairingCode: string) => boolean;
   updatePatientDestinations: (patientId: string, destinations: SavedDestination[]) => void;
-  getPatientByCode: (code: string) => PatientInfo | null;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -79,20 +76,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [allPatients]);
 
-  const login = (role: UserRole, name: string, phone?: string) => {
+  const login = (role: UserRole, name: string, phone: string = "") => {
     const userId = generateId();
     
     if (role === 'patient') {
-      const pairingCode = generateCode();
       const newPatient: PatientInfo = {
         id: userId,
         name,
         avatar: '👤',
+        pairingCode: generateCode(),
         currentLocation: [1.3521, 103.8198],
         isNavigating: false,
         destination: null,
         guardianPhone: phone || '',
-        pairingCode,
         destinations: [...mockSavedDestinations],
         profile: {
           id: userId,
@@ -115,12 +111,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(newSession);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(newSession));
 
-    } else {
+      } else { // Role is 'caregiver'
+      
+      // 💡 CRITICAL: Auto-link to the first existing patient for simulation
+      const firstPatient = allPatients[0];
+      const linkedPatientIds = firstPatient ? [firstPatient.id] : [];
+      
       const newCaregiver: CaregiverInfo = {
         id: userId,
         name,
         phone: phone || '',
-        patients: [],
+        patients: firstPatient ? [firstPatient] : [], // Populate patient list immediately
       };
 
       const savedCaregivers = localStorage.getItem(CAREGIVERS_KEY);
@@ -130,7 +131,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       setCaregiverData(newCaregiver);
 
-      const newSession: AuthSession = { role, userId, linkedPatients: [] };
+      // Ensure session contains linked patients
+      const newSession: AuthSession = { role, userId, linkedPatients: linkedPatientIds };
       setSession(newSession);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(newSession));
     }
@@ -141,50 +143,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setPatientData(null);
     setCaregiverData(null);
     localStorage.removeItem(STORAGE_KEY);
-  };
-
-  const generatePairingCode = (): string => {
-    if (patientData) {
-      return patientData.pairingCode;
-    }
-    return '';
-  };
-
-  const getPatientByCode = (code: string): PatientInfo | null => {
-    return allPatients.find(p => p.pairingCode === code) || null;
-  };
-
-  const linkPatient = (pairingCode: string): boolean => {
-    const patient = allPatients.find(p => p.pairingCode === pairingCode);
-    if (!patient || !session || session.role !== 'caregiver') return false;
-
-    // Check if already linked
-    if (session.linkedPatients?.includes(patient.id)) return true;
-
-    const updatedLinkedPatients = [...(session.linkedPatients || []), patient.id];
-    const updatedSession = { ...session, linkedPatients: updatedLinkedPatients };
-    setSession(updatedSession);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedSession));
-
-    // Update caregiver data
-    if (caregiverData) {
-      const updatedCaregiver = {
-        ...caregiverData,
-        patients: [...caregiverData.patients, patient],
-      };
-      setCaregiverData(updatedCaregiver);
-
-      // Persist caregiver
-      const savedCaregivers = localStorage.getItem(CAREGIVERS_KEY);
-      const caregivers: CaregiverInfo[] = savedCaregivers ? JSON.parse(savedCaregivers) : [];
-      const idx = caregivers.findIndex(c => c.id === caregiverData.id);
-      if (idx >= 0) {
-        caregivers[idx] = updatedCaregiver;
-        localStorage.setItem(CAREGIVERS_KEY, JSON.stringify(caregivers));
-      }
-    }
-
-    return true;
   };
 
   const updatePatientDestinations = (patientId: string, destinations: SavedDestination[]) => {
@@ -217,10 +175,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         allPatients,
         login,
         logout,
-        generatePairingCode,
-        linkPatient,
-        updatePatientDestinations,
-        getPatientByCode,
+        updatePatientDestinations
       }}
     >
       {children}

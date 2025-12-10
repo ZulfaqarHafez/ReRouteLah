@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from "react";
-import { ArrowLeft, User, Volume2, VolumeX, CheckCircle, LogOut } from "lucide-react";
+import { ArrowLeft, User, Volume2, VolumeX, CheckCircle, LogOut, Camera } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SavedDestination, PatientInfo } from "@/types/app";
 import DestinationCard from "./DestinationCard";
@@ -13,6 +13,7 @@ import NavigationStepCard from "./NavigationStepCard";
 import { useVoiceNavigation } from "@/hooks/useVoiceNavigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
+import ARNavigation from "./ARNavigation";
 
 interface PatientInterfaceProps {
   patient: PatientInfo;
@@ -26,6 +27,7 @@ interface NavigationStep {
   direction: "straight" | "left" | "right" | "bus" | "destination";
   instruction: string;
   distance?: string;
+  coordinates?: [number, number]; // 🟢 Added coordinates for AR
 }
 
 const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps) => {
@@ -35,6 +37,30 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const { speak, speakStep, stop, isSpeaking } = useVoiceNavigation({ rate: 0.85 });
+  
+  // AR State
+  const [showAR, setShowAR] = useState(false);
+  const [currentLocation, setCurrentLocation] = useState<[number, number]>(
+    patient.currentLocation || [1.3521, 103.8198]
+  );
+
+  // 🟢 NEW: State for dynamic route generation
+  const [navigationSteps, setNavigationSteps] = useState<NavigationStep[]>([]);
+  const [routePath, setRoutePath] = useState<[number, number][]>([]);
+
+  // Track location for AR
+  useEffect(() => {
+    if ("geolocation" in navigator) {
+      const watchId = navigator.geolocation.watchPosition(
+        (position) => {
+          setCurrentLocation([position.coords.latitude, position.coords.longitude]);
+        },
+        (error) => console.error("GPS Error:", error),
+        { enableHighAccuracy: true }
+      );
+      return () => navigator.geolocation.clearWatch(watchId);
+    }
+  }, []);
 
   const handleSwitchRole = () => {
     logout();
@@ -44,14 +70,8 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
     });
   };
 
-  // Mock navigation steps - in real app would come from routing API
-  const navigationSteps: NavigationStep[] = [
-    { id: 1, direction: "straight", instruction: "Walk straight ahead", distance: "50 meters" },
-    { id: 2, direction: "right", instruction: "Turn right at the traffic light", distance: "100 meters" },
-    { id: 3, direction: "bus", instruction: "Take Bus 36 at the bus stop", distance: "3 stops" },
-    { id: 4, direction: "left", instruction: "Exit bus and turn left", distance: "20 meters" },
-    { id: 5, direction: "destination", instruction: "You have arrived!", distance: "" },
-  ];
+  // 🟢 CHANGED: Navigation steps are now generated dynamically in handleDestinationSelect
+  // to ensure they align with the AR route path.
 
   // Use patient's destinations from auth context (managed by caregiver)
   const destinations = patient.destinations || [];
@@ -60,6 +80,32 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
     setSelectedDestination(destination);
     setAppView("navigation");
     setCurrentStepIndex(0);
+    
+    // 🟢 NEW: Generate mock route path and steps based on actual destination
+    // This creates intermediate waypoints so the AR arrow updates as you move
+    const start = currentLocation;
+    const end = destination.coordinates;
+    
+    // Create simulated waypoints (zigzag) to demonstrate AR updates
+    const wp1: [number, number] = [
+        start[0] + (end[0] - start[0]) * 0.33 + 0.001, // Slight detour
+        start[1] + (end[1] - start[1]) * 0.33
+    ];
+    const wp2: [number, number] = [
+        start[0] + (end[0] - start[0]) * 0.66 - 0.001, // Slight detour back
+        start[1] + (end[1] - start[1]) * 0.66
+    ];
+
+    const newSteps: NavigationStep[] = [
+      { id: 1, direction: "straight", instruction: "Walk straight towards the junction", distance: "150 meters", coordinates: wp1 },
+      { id: 2, direction: "right", instruction: "Turn right and follow the path", distance: "100 meters", coordinates: wp2 },
+      { id: 3, direction: "bus", instruction: "Take Bus 36", distance: "2 stops", coordinates: end },
+      { id: 4, direction: "destination", instruction: "You have arrived!", distance: "", coordinates: end },
+    ];
+
+    setNavigationSteps(newSteps);
+    setRoutePath([start, wp1, wp2, end]); // AR will follow this path sequence
+    
     onNavigationStart?.(destination);
   };
 
@@ -67,18 +113,20 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
     setAppView("home");
     setSelectedDestination(null);
     setCurrentStepIndex(0);
+    setShowAR(false);
     stop();
+    setRoutePath([]); // Clear path
   };
 
   // Auto-speak first step when navigation starts
   useEffect(() => {
-    if (appView === "navigation" && voiceEnabled && selectedDestination) {
+    if (appView === "navigation" && voiceEnabled && selectedDestination && navigationSteps.length > 0) {
       const timer = setTimeout(() => {
         speak(`Starting navigation to ${selectedDestination.name}. ${navigationSteps[0].instruction}. ${navigationSteps[0].distance || ""}`);
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [appView, selectedDestination, voiceEnabled]);
+  }, [appView, selectedDestination, voiceEnabled, navigationSteps]);
 
   const handleSpeakStep = (stepIndex: number) => {
     if (isSpeaking) {
@@ -122,6 +170,27 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
   if (appView === "navigation" && selectedDestination) {
     return (
       <div className="min-h-screen pb-32 pt-4">
+        {/* AR Overlay */}
+        {showAR && (
+          <>
+            <ARNavigation 
+              currentLocation={currentLocation}
+              routePath={routePath}
+              onClose={() => setShowAR(false)}
+            />
+            {/* 🟢 NEW: Button to return to standard direction guide */}
+            <div className="fixed bottom-8 left-0 right-0 z-[60] flex justify-center px-4">
+               <Button 
+                 onClick={() => setShowAR(false)}
+                 className="w-full max-w-md h-16 text-xl font-bold rounded-2xl bg-white text-black hover:bg-gray-100 shadow-2xl border-2 border-black/10"
+               >
+                 <ArrowLeft className="h-6 w-6 mr-2" />
+                 Back to Direction Guide
+               </Button>
+            </div>
+          </>
+        )}
+
         <div className="px-4 space-y-4">
           {/* Header */}
           <div className="flex items-center justify-between">
@@ -149,6 +218,15 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
               <h2 className="text-2xl font-bold text-foreground">{selectedDestination.name}</h2>
             </div>
           </div>
+
+          {/* AR Camera Button */}
+          <Button 
+            onClick={() => setShowAR(true)}
+            className="w-full h-16 text-xl font-bold rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg"
+          >
+            <Camera className="h-7 w-7 mr-3" />
+            View Live AR Guide
+          </Button>
 
           {/* Progress indicator */}
           <div className="flex items-center justify-center gap-2 py-2">

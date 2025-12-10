@@ -1,83 +1,92 @@
-import { useEffect, useRef, useState } from "react";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
+// src/components/MapDisplay.tsx
+'use client';
 
-interface MapDisplayProps {
-  center?: [number, number];
-  zoom?: number;
-  className?: string;
+// Fix for Leaflet in Next.js
+import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+import L from 'leaflet';
+import { useEffect } from 'react';
+
+// Fix for missing marker icons
+const iconUrl = 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png';
+const iconRetinaUrl = 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-2x.png';
+const shadowUrl = 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png';
+
+// Setup Icons
+const userIcon = new L.Icon({
+    iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-blue.png',
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+    iconSize: [25, 41],
+    iconAnchor: [12, 41],
+    popupAnchor: [1, -34],
+    shadowSize: [41, 41]
+});
+
+const destIcon = new L.Icon({
+    iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+    iconSize: [25, 41],
+    iconAnchor: [12, 41],
+    popupAnchor: [1, -34],
+    shadowSize: [41, 41]
+});
+
+function MapUpdater({ center }: { center: [number, number] }) {
+    const map = useMap();
+    useEffect(() => {
+        if (center) map.setView(center, map.getZoom());
+    }, [center, map]);
+    return null;
 }
 
-const MapDisplay = ({
-  center = [1.3521, 103.8198], // Singapore
-  zoom = 15,
-  className = "",
-}: MapDisplayProps) => {
-  const mapRef = useRef<HTMLDivElement>(null);
-  const mapInstanceRef = useRef<L.Map | null>(null);
-  const [isLoaded, setIsLoaded] = useState(false);
+export default function MapDisplay({ 
+    userLat, 
+    userLng, 
+    destLat, 
+    destLng,
+    routePath = [] 
+}: { 
+    userLat: number, 
+    userLng: number, 
+    destLat?: number, 
+    destLng?: number,
+    routePath?: [number, number][] 
+}) {
+    // Safety check for invalid coordinates
+    if (!userLat || !userLng) return <div style={{color: 'white'}}>Waiting for GPS...</div>;
 
-  useEffect(() => {
-    if (!mapRef.current || mapInstanceRef.current) return;
+    return (
+        <MapContainer 
+            center={[userLat, userLng]} 
+            zoom={15} 
+            style={{ height: '100%', width: '100%', borderRadius: '15px' }}
+        >
+            {/* 🟢 CHANGED: Switched to OpenStreetMap for reliability */}
+            <TileLayer
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
 
-    // Initialize map
-    const map = L.map(mapRef.current, {
-      center: center,
-      zoom: zoom,
-      zoomControl: false,
-    });
+            <Marker position={[userLat, userLng]} icon={userIcon}>
+                <Popup>You are here</Popup>
+            </Marker>
 
-    // Add tile layer with a clean style
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-      subdomains: "abcd",
-      maxZoom: 20,
-    }).addTo(map);
+            {destLat && destLng && (
+                <Marker position={[destLat, destLng]} icon={destIcon}>
+                    <Popup>Destination</Popup>
+                </Marker>
+            )}
 
-    // Add current location marker
-    const currentLocationIcon = L.divIcon({
-      className: "current-location-marker",
-      html: `
-        <div style="
-          width: 24px;
-          height: 24px;
-          border-radius: 50%;
-          background: linear-gradient(135deg, hsl(175, 60%, 40%) 0%, hsl(185, 55%, 50%) 100%);
-          border: 4px solid white;
-          box-shadow: 0 4px 16px rgba(0,0,0,0.2);
-        "></div>
-      `,
-      iconSize: [24, 24],
-      iconAnchor: [12, 12],
-    });
+            {routePath && routePath.length > 0 && (
+                <Polyline 
+                    positions={routePath} 
+                    color="#0070f3" 
+                    weight={5} 
+                    opacity={0.7} 
+                />
+            )}
 
-    L.marker(center, { icon: currentLocationIcon }).addTo(map);
-
-    // Add zoom control in a better position
-    L.control.zoom({ position: "bottomright" }).addTo(map);
-
-    mapInstanceRef.current = map;
-    setIsLoaded(true);
-
-    return () => {
-      map.remove();
-      mapInstanceRef.current = null;
-    };
-  }, [center, zoom]);
-
-  return (
-    <div className={`relative overflow-hidden rounded-2xl ${className}`}>
-      <div ref={mapRef} className="h-full w-full" />
-      {!isLoaded && (
-        <div className="absolute inset-0 flex items-center justify-center bg-muted">
-          <div className="flex flex-col items-center gap-2">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-            <span className="text-sm text-muted-foreground">Loading map...</span>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-export default MapDisplay;
+            <MapUpdater center={[userLat, userLng]} />
+        </MapContainer>
+    );
+}
