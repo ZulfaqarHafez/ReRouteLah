@@ -17,7 +17,7 @@
 
 ## 🌟 Overview
 
-**ReRouteLah** is an accessibility-first navigation application designed specifically for Persons with Intellectual Disabilities (PwID) in Singapore. Built during a hackathon, the app bridges the gap between independence and safety, enabling travelers to navigate public transport confidently while giving caregivers peace of mind through real-time monitoring.
+**GuideMeSG** is an accessibility-first navigation application designed specifically for Persons with Intellectual Disabilities (PwID) in Singapore. Built during a hackathon, the app bridges the gap between independence and safety, enabling travelers to navigate public transport confidently while giving caregivers peace of mind through real-time monitoring.
 
 ### ✨ Key Features
 
