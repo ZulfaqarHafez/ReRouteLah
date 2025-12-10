@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { 
   Navigation, Bus, AlertTriangle, CheckCircle, Search, MapPin, 
   Home as HomeIcon, User, Video, Map as MapIcon, Phone, PhoneCall,
-  ArrowLeft, X, ShieldAlert, Loader, Star, Heart, LogOut
+  ArrowLeft, X, ShieldAlert, Loader, Star, Heart, LogOut, HelpCircle
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import SignIn from './components/SignIn';
@@ -119,7 +119,6 @@ export default function SmartRouteCare() {
   // ==== FAVORITES FUNCTIONS ====
   
   const addToFavorites = (location: any) => {
-    // Check if already in favorites
     const exists = favorites.find(f => f.name === location.name);
     if (exists) {
       alert('Already in favorites!');
@@ -142,6 +141,55 @@ export default function SmartRouteCare() {
     const updated = favorites.filter(f => f.id !== id);
     setFavorites(updated);
     localStorage.setItem('favorites', JSON.stringify(updated));
+  };
+
+  // ==== I'M LOST FUNCTION ====
+  
+  const handleImLost = () => {
+    if (!currentPos || nearestPoints.length === 0) {
+      alert('Getting your location... Please wait a moment.');
+      return;
+    }
+
+    // Navigate to the closest dementia point
+    const closest = nearestPoints[0];
+    const dest = {
+      name: closest.name,
+      latitude: closest.lat,
+      longitude: closest.lng
+    };
+    
+    // Set destination and calculate route
+    setDestination(dest);
+    setShowDementiaPoints(false);
+    setShowFavorites(false);
+    
+    if (currentPos) {
+      setRoutePath([
+        [currentPos.lat, currentPos.lng],
+        [dest.latitude, dest.longitude]
+      ]);
+      
+      const newBearing = calculateBearing(
+        currentPos.lat, currentPos.lng,
+        dest.latitude, dest.longitude
+      );
+      setBearing(newBearing);
+      
+      const dist = calculateDistance(
+        currentPos.lat, currentPos.lng,
+        dest.latitude, dest.longitude
+      );
+      setDistance(dist);
+      
+      setNavInstruction(`🚨 Taking you to ${dest.name} - ${(dist / 1000).toFixed(1)}km away`);
+    }
+    
+    // Start navigation immediately for emergency
+    setCurrentView('navigation');
+    findBestBus(dest.latitude, dest.longitude);
+    
+    alert(`Taking you to nearest safe point: ${closest.name}`);
   };
 
   // ==== CAMERA & SENSORS ====
@@ -372,36 +420,53 @@ export default function SmartRouteCare() {
     findBestBus(lat, lng);
   };
 
-  // ==== START NAVIGATION ====
+  // ==== SELECT DESTINATION (doesn't start navigation yet) ====
   
-  const startNavigation = (dest: {name: string, latitude: number, longitude: number}) => {
+  const selectDestination = (dest: {name: string, latitude: number, longitude: number}) => {
     setDestination(dest);
     setShowDementiaPoints(false);
     setShowFavorites(false);
     
+    // Just show the route preview on map, don't start navigation
     if (currentPos) {
       setRoutePath([
         [currentPos.lat, currentPos.lng],
         [dest.latitude, dest.longitude]
       ]);
       
-      const newBearing = calculateBearing(
-        currentPos.lat, currentPos.lng,
-        dest.latitude, dest.longitude
-      );
-      setBearing(newBearing);
-      
       const dist = calculateDistance(
         currentPos.lat, currentPos.lng,
         dest.latitude, dest.longitude
       );
       setDistance(dist);
-      
-      setNavInstruction(`🚶 Head towards ${dest.name}`);
     }
     
-    setCurrentView('navigation');
+    // Find best bus route in background
     findBestBus(dest.latitude, dest.longitude);
+  };
+
+  // ==== START NAVIGATION (only when user clicks button) ====
+  
+  const startNavigation = () => {
+    if (!destination || !currentPos) return;
+    
+    // Calculate bearing and distance
+    const newBearing = calculateBearing(
+      currentPos.lat, currentPos.lng,
+      destination.latitude, destination.longitude
+    );
+    setBearing(newBearing);
+    
+    const dist = calculateDistance(
+      currentPos.lat, currentPos.lng,
+      destination.latitude, destination.longitude
+    );
+    setDistance(dist);
+    
+    setNavInstruction(`🚶 Head towards ${destination.name}`);
+    
+    // Now actually start navigation
+    setCurrentView('navigation');
   };
 
   // ==== BUS STATUS HELPERS ====
@@ -426,13 +491,11 @@ export default function SmartRouteCare() {
     startGPS();
     startCompass();
     
-    // Load favorites from localStorage
     const savedFavorites = localStorage.getItem('favorites');
     if (savedFavorites) {
       setFavorites(JSON.parse(savedFavorites));
     }
 
-    // Load dementia points
     const loadDementiaPoints = async () => {
       try {
         const { dementiaPoints } = await import('./data/dementiaPoints');
@@ -463,7 +526,6 @@ export default function SmartRouteCare() {
     }
   }, [currentView, busStopCode]);
 
-  // Calculate nearest dementia points when position changes
   useEffect(() => {
     if (currentPos && dementiaPoints.length > 0) {
       const withDistances = dementiaPoints.map(point => ({
@@ -481,12 +543,10 @@ export default function SmartRouteCare() {
 
   // ==== RENDER ====
   
-  // Show sign-in screen if not signed in
   if (!isSignedIn) {
     return <SignIn onSignIn={handleSignIn} />;
   }
 
-  // Show caregiver dashboard if caregiver
   if (userType === 'caregiver') {
     return <CaregiverDashboard caregiverData={userData} onSignOut={handleSignOut} />;
   }
@@ -496,9 +556,9 @@ export default function SmartRouteCare() {
   // ==================== HOME VIEW ====================
   if (currentView === 'home') {
     return (
-      <div className="min-h-screen bg-gray-900 text-white p-4">
+      <div className="min-h-screen bg-gray-900 text-white flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between mb-6 pt-4">
+        <div className="flex items-center justify-between p-4 pt-6">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center">
               <Navigation className="w-6 h-6" />
@@ -532,7 +592,7 @@ export default function SmartRouteCare() {
         </div>
 
         {/* Government Banner */}
-        <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 mb-4 flex items-start gap-2">
+        <div className="mx-4 bg-red-900/30 border border-red-700 rounded-lg p-3 mb-4 flex items-start gap-2">
           <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
           <div className="text-sm">
             <p className="text-red-300 font-semibold">A Singapore Government Agency Website</p>
@@ -540,183 +600,200 @@ export default function SmartRouteCare() {
           </div>
         </div>
 
-        {/* Location Display */}
-        <div className="mb-4">
-          <div className="flex items-center gap-2 bg-gray-800 rounded-lg p-3 mb-3">
-            <MapPin className="w-5 h-5 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Your Location"
-              value={currentPos ? `${currentPos.lat.toFixed(4)}, ${currentPos.lng.toFixed(4)}` : 'Getting location...'}
-              className="bg-transparent flex-1 outline-none text-sm"
-              readOnly
-            />
-          </div>
-
-          {/* Search Bar */}
-          <form onSubmit={handleSearch} className="relative mb-3">
-            <div className="flex items-center gap-2 bg-gray-800 rounded-lg p-3">
-              <Search className="w-5 h-5 text-gray-400" />
+        {/* Scrollable Content */}
+        <div className="flex-1 overflow-y-auto px-4 pb-32">
+          {/* Location Display */}
+          <div className="mb-4">
+            <div className="flex items-center gap-2 bg-gray-800 rounded-lg p-3 mb-3">
+              <MapPin className="w-5 h-5 text-gray-400" />
               <input
                 type="text"
-                placeholder="Where to?"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Your Location"
+                value={currentPos ? `${currentPos.lat.toFixed(4)}, ${currentPos.lng.toFixed(4)}` : 'Getting location...'}
                 className="bg-transparent flex-1 outline-none text-sm"
+                readOnly
               />
-              {isSearching && <Loader className="w-5 h-5 animate-spin text-blue-500" />}
             </div>
 
-            {/* Search Results */}
-            {searchResults.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-2 bg-gray-800 rounded-lg shadow-xl z-10 max-h-60 overflow-y-auto">
-                {searchResults.map((result, idx) => (
+            {/* Search Bar */}
+            <form onSubmit={handleSearch} className="relative mb-3">
+              <div className="flex items-center gap-2 bg-gray-800 rounded-lg p-3">
+                <Search className="w-5 h-5 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Where to?"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="bg-transparent flex-1 outline-none text-sm"
+                />
+                {isSearching && <Loader className="w-5 h-5 animate-spin text-blue-500" />}
+              </div>
+
+              {searchResults.length > 0 && (
+                <div className="absolute top-full left-0 right-0 mt-2 bg-gray-800 rounded-lg shadow-xl z-10 max-h-60 overflow-y-auto">
+                  {searchResults.map((result, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => selectSearchResult(result)}
+                      className="w-full p-4 text-left hover:bg-gray-700 transition-colors border-b border-gray-700 last:border-0"
+                    >
+                      <p className="font-medium">{result.SEARCHVAL}</p>
+                      <p className="text-sm text-gray-400">{result.ADDRESS}</p>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </form>
+
+            {/* Favorites Section */}
+            {favorites.length > 0 && (
+              <div className="mb-3">
+                <button
+                  onClick={() => setShowFavorites(!showFavorites)}
+                  className="w-full flex items-center gap-2 bg-yellow-600 hover:bg-yellow-700 rounded-lg p-3 transition-colors"
+                >
+                  <Star className="w-5 h-5" />
+                  <span className="flex-1 text-left text-sm font-semibold">
+                    My Favorite Places ({favorites.length})
+                  </span>
+                  <span className="text-white">{showFavorites ? '▲' : '▼'}</span>
+                </button>
+
+                {showFavorites && (
+                  <div className="mt-2 bg-gray-800 rounded-lg overflow-hidden">
+                    {favorites.map((fav) => (
+                      <div key={fav.id} className="flex items-center justify-between p-3 border-b border-gray-700 last:border-0">
+                        <button
+                          onClick={() => selectDestination(fav)}
+                          className="flex-1 text-left hover:text-blue-400 transition-colors"
+                        >
+                          <p className="font-medium">{fav.name}</p>
+                          <p className="text-xs text-gray-400">Tap to select destination</p>
+                        </button>
+                        <button
+                          onClick={() => removeFromFavorites(fav.id)}
+                          className="p-2 text-red-400 hover:text-red-300 transition-colors"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Nearest Dementia Point Button */}
+            <button
+              onClick={() => setShowDementiaPoints(!showDementiaPoints)}
+              className="w-full flex items-center gap-2 bg-blue-600 hover:bg-blue-700 rounded-lg p-3 mb-3 transition-colors"
+            >
+              <MapPin className="w-5 h-5" />
+              <span className="flex-1 text-left text-sm font-semibold">
+                Nearest Dementia Point
+              </span>
+              <span className="text-white">{showDementiaPoints ? '▲' : '▼'}</span>
+            </button>
+
+            {showDementiaPoints && nearestPoints.length > 0 && (
+              <div className="mb-3 bg-gray-800 rounded-lg overflow-hidden">
+                <div className="p-3 border-b border-gray-700 bg-blue-600">
+                  <p className="text-sm font-semibold">5 Nearest Safe Points</p>
+                </div>
+                {nearestPoints.map((point, idx) => (
                   <button
                     key={idx}
-                    onClick={() => selectSearchResult(result)}
+                    onClick={() => selectDestination({
+                      name: point.name,
+                      latitude: point.lat,
+                      longitude: point.lng
+                    })}
                     className="w-full p-4 text-left hover:bg-gray-700 transition-colors border-b border-gray-700 last:border-0"
                   >
-                    <p className="font-medium">{result.SEARCHVAL}</p>
-                    <p className="text-sm text-gray-400">{result.ADDRESS}</p>
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <p className="font-medium">{point.name}</p>
+                        <p className="text-xs text-gray-400 mt-1">{point.address}</p>
+                      </div>
+                      <span className="text-blue-400 text-sm font-semibold ml-2">
+                        {(point.distance / 1000).toFixed(1)} km
+                      </span>
+                    </div>
                   </button>
                 ))}
               </div>
             )}
-          </form>
 
-          {/* Favorites Section */}
-          {favorites.length > 0 && (
-            <div className="mb-3">
-              <button
-                onClick={() => setShowFavorites(!showFavorites)}
-                className="w-full flex items-center gap-2 bg-yellow-600 hover:bg-yellow-700 rounded-lg p-3 transition-colors"
-              >
-                <Star className="w-5 h-5" />
-                <span className="flex-1 text-left text-sm font-semibold">
-                  My Favorite Places ({favorites.length})
-                </span>
-                <span className="text-white">{showFavorites ? '▲' : '▼'}</span>
-              </button>
+            {showDementiaPoints && nearestPoints.length === 0 && (
+              <div className="mb-3 bg-gray-800 rounded-lg p-4 text-center">
+                <p className="text-gray-400">
+                  {currentPos ? 'Loading safe points...' : 'Waiting for GPS location...'}
+                </p>
+              </div>
+            )}
+          </div>
 
-              {showFavorites && (
-                <div className="mt-2 bg-gray-800 rounded-lg overflow-hidden">
-                  {favorites.map((fav) => (
-                    <div key={fav.id} className="flex items-center justify-between p-3 border-b border-gray-700 last:border-0">
-                      <button
-                        onClick={() => startNavigation(fav)}
-                        className="flex-1 text-left hover:text-blue-400 transition-colors"
-                      >
-                        <p className="font-medium">{fav.name}</p>
-                        <p className="text-xs text-gray-400">Tap to navigate</p>
-                      </button>
-                      <button
-                        onClick={() => removeFromFavorites(fav.id)}
-                        className="p-2 text-red-400 hover:text-red-300 transition-colors"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ))}
+          {destination && !favorites.find(f => f.name === destination.name) && (
+            <button
+              onClick={() => addToFavorites(destination)}
+              className="w-full bg-yellow-600 hover:bg-yellow-700 py-2 rounded-lg text-sm font-semibold mb-3 flex items-center justify-center gap-2 transition-colors"
+            >
+              <Star className="w-4 h-4" />
+              Save "{destination.name}" as Favorite
+            </button>
+          )}
+
+          {/* Map Display */}
+          <div className="h-[400px] mb-6 rounded-2xl overflow-hidden">
+            {currentPos ? (
+              <MapDisplay
+                userLat={currentPos.lat}
+                userLng={currentPos.lng}
+                destLat={destination?.latitude}
+                destLng={destination?.longitude}
+                routePath={routePath}
+              />
+            ) : (
+              <div className="h-full bg-gray-800 flex items-center justify-center rounded-2xl">
+                <div className="text-center">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
+                  <p>Loading map...</p>
                 </div>
-              )}
-            </div>
-          )}
-
-          {/* Nearest Dementia Point Button */}
-          <button
-            onClick={() => setShowDementiaPoints(!showDementiaPoints)}
-            className="w-full flex items-center gap-2 bg-blue-600 hover:bg-blue-700 rounded-lg p-3 mb-3 transition-colors"
-          >
-            <MapPin className="w-5 h-5" />
-            <span className="flex-1 text-left text-sm font-semibold">
-              Nearest Dementia Point
-            </span>
-            <span className="text-white">{showDementiaPoints ? '▲' : '▼'}</span>
-          </button>
-
-          {/* Show Nearest Dementia Points */}
-          {showDementiaPoints && nearestPoints.length > 0 && (
-            <div className="mb-3 bg-gray-800 rounded-lg overflow-hidden">
-              <div className="p-3 border-b border-gray-700 bg-blue-600">
-                <p className="text-sm font-semibold">5 Nearest Safe Points</p>
               </div>
-              {nearestPoints.map((point, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => startNavigation({
-                    name: point.name,
-                    latitude: point.lat,
-                    longitude: point.lng
-                  })}
-                  className="w-full p-4 text-left hover:bg-gray-700 transition-colors border-b border-gray-700 last:border-0"
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <p className="font-medium">{point.name}</p>
-                      <p className="text-xs text-gray-400 mt-1">{point.address}</p>
-                    </div>
-                    <span className="text-blue-400 text-sm font-semibold ml-2">
-                      {(point.distance / 1000).toFixed(1)} km
-                    </span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {showDementiaPoints && nearestPoints.length === 0 && (
-            <div className="mb-3 bg-gray-800 rounded-lg p-4 text-center">
-              <p className="text-gray-400">
-                {currentPos ? 'Loading safe points...' : 'Waiting for GPS location...'}
-              </p>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
-        {/* Add to Favorites Button (if destination selected) */}
-        {destination && !favorites.find(f => f.name === destination.name) && (
+        {/* FIXED BOTTOM BUTTONS */}
+        <div className="fixed bottom-0 left-0 right-0 bg-gray-900 border-t border-gray-800 p-4 space-y-3">
+          {/* I'm Lost Button */}
           <button
-            onClick={() => addToFavorites(destination)}
-            className="w-full bg-yellow-600 hover:bg-yellow-700 py-2 rounded-lg text-sm font-semibold mb-3 flex items-center justify-center gap-2 transition-colors"
+            onClick={handleImLost}
+            disabled={!currentPos || nearestPoints.length === 0}
+            className={`w-full py-3 rounded-xl font-semibold text-lg flex items-center justify-center gap-2 transition-all ${
+              currentPos && nearestPoints.length > 0
+                ? 'bg-orange-600 hover:bg-orange-700 active:scale-95' 
+                : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+            }`}
           >
-            <Star className="w-4 h-4" />
-            Save "{destination.name}" as Favorite
+            <HelpCircle className="w-6 h-6" />
+            I'm Lost - Take Me to Safety
           </button>
-        )}
 
-        {/* Map Display */}
-        <div className="h-[400px] mb-6 rounded-2xl overflow-hidden">
-          {currentPos ? (
-            <MapDisplay
-              userLat={currentPos.lat}
-              userLng={currentPos.lng}
-              destLat={destination?.latitude}
-              destLng={destination?.longitude}
-              routePath={routePath}
-            />
-          ) : (
-            <div className="h-full bg-gray-800 flex items-center justify-center rounded-2xl">
-              <div className="text-center">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
-                <p>Loading map...</p>
-              </div>
-            </div>
-          )}
+          {/* Start Navigation Button */}
+          <button
+            onClick={startNavigation}
+            disabled={!destination}
+            className={`w-full py-4 rounded-xl font-semibold text-lg flex items-center justify-center gap-2 transition-all ${
+              destination 
+                ? 'bg-blue-600 hover:bg-blue-700 active:scale-95' 
+                : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+            }`}
+          >
+            <Navigation className="w-6 h-6" />
+            {destination ? `Start Navigation to ${destination.name}` : 'Select a destination first'}
+          </button>
         </div>
-
-        {/* Start Navigation Button */}
-        <button
-          onClick={() => destination && startNavigation(destination)}
-          disabled={!destination}
-          className={`w-full py-4 rounded-xl font-semibold text-lg flex items-center justify-center gap-2 transition-all ${
-            destination 
-              ? 'bg-blue-600 hover:bg-blue-700 active:scale-95' 
-              : 'bg-gray-700 text-gray-400 cursor-not-allowed'
-          }`}
-        >
-          <Navigation className="w-6 h-6" />
-          {destination ? `Navigate to ${destination.name}` : 'Select a destination first'}
-        </button>
       </div>
     );
   }
@@ -759,7 +836,6 @@ export default function SmartRouteCare() {
               muted
             />
             
-            {/* AR Overlay - Direction Arrow */}
             <div className="absolute inset-0 flex items-center justify-center">
               <div
                 className="relative"
@@ -774,7 +850,6 @@ export default function SmartRouteCare() {
               </div>
             </div>
 
-            {/* Bus Information Banner */}
             {busService && busLoad && (
               <div className="absolute top-24 left-1/2 transform -translate-x-1/2 z-10">
                 <div className={`${getBusStatusColor()} text-white px-6 py-3 rounded-lg shadow-xl`}>
@@ -785,7 +860,6 @@ export default function SmartRouteCare() {
               </div>
             )}
 
-            {/* Distance Info */}
             {destination && distance > 50 && (
               <div className="absolute top-44 left-1/2 transform -translate-x-1/2 z-10 bg-blue-600/90 text-white px-4 py-2 rounded-lg">
                 <p className="text-sm">{Math.round(distance)}m to {destination.name}</p>
@@ -793,7 +867,6 @@ export default function SmartRouteCare() {
             )}
           </div>
         ) : (
-          // Map View (Full Screen)
           <div className="absolute inset-0">
             {currentPos && (
               <MapDisplay
@@ -805,7 +878,6 @@ export default function SmartRouteCare() {
               />
             )}
             
-            {/* Navigation Info Overlay */}
             <div className="absolute top-24 left-1/2 transform -translate-x-1/2 z-10 bg-blue-600 text-white px-6 py-3 rounded-xl shadow-xl max-w-xs text-center">
               <p className="text-sm font-semibold">
                 {destination ? destination.name : 'Select destination'}
@@ -820,34 +892,50 @@ export default function SmartRouteCare() {
           </div>
         )}
 
-        {/* Bottom Control Panel */}
-        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black via-black/90 to-transparent pt-20 pb-8 px-4 z-10">
-          {/* Toggle View Button */}
-          <button
-            onClick={() => setNavigationMode(navigationMode === 'ar' ? 'map' : 'ar')}
-            className="w-full bg-blue-600 hover:bg-blue-700 py-3 rounded-xl font-semibold mb-3 flex items-center justify-center gap-2"
-          >
-            {navigationMode === 'ar' ? (
-              <>
-                <MapIcon className="w-5 h-5" />
-                Map Navigation
-              </>
-            ) : (
-              <>
-                <Video className="w-5 h-5" />
-                Live Camera Navigation
-              </>
-            )}
-          </button>
+        {/* FIXED BOTTOM CONTROL PANEL - ALWAYS VISIBLE */}
+        <div className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-black via-black to-transparent pt-24 pb-6 px-4 z-[9999] pointer-events-none">
+          <div className="pointer-events-auto space-y-3">
+            {/* I'm Lost Button - Always visible during navigation */}
+            <button
+              onClick={handleImLost}
+              disabled={!currentPos || nearestPoints.length === 0}
+              className={`w-full py-3 rounded-xl font-semibold flex items-center justify-center gap-2 transition-all ${
+                currentPos && nearestPoints.length > 0
+                  ? 'bg-orange-600 hover:bg-orange-700 active:scale-95' 
+                  : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+              }`}
+            >
+              <HelpCircle className="w-5 h-5" />
+              I'm Lost - Take Me to Safety
+            </button>
 
-          {/* Call Caregiver Button */}
-          <button 
-            onClick={() => alert(`Calling ${userData?.caregiverName}: ${userData?.caregiverPhone}`)}
-            className="w-full bg-green-600 hover:bg-green-700 py-3 rounded-xl font-semibold flex items-center justify-center gap-2"
-          >
-            <PhoneCall className="w-5 h-5" />
-            Call Caregiver
-          </button>
+            {/* Toggle View Button */}
+            <button
+              onClick={() => setNavigationMode(navigationMode === 'ar' ? 'map' : 'ar')}
+              className="w-full bg-blue-600 hover:bg-blue-700 py-3 rounded-xl font-semibold flex items-center justify-center gap-2"
+            >
+              {navigationMode === 'ar' ? (
+                <>
+                  <MapIcon className="w-5 h-5" />
+                  Map Navigation
+                </>
+              ) : (
+                <>
+                  <Video className="w-5 h-5" />
+                  Live Camera Navigation
+                </>
+              )}
+            </button>
+
+            {/* Call Caregiver Button */}
+            <button 
+              onClick={() => alert(`Calling ${userData?.caregiverName}: ${userData?.caregiverPhone}`)}
+              className="w-full bg-green-600 hover:bg-green-700 py-3 rounded-xl font-semibold flex items-center justify-center gap-2"
+            >
+              <PhoneCall className="w-5 h-5" />
+              Call Caregiver
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -857,7 +945,6 @@ export default function SmartRouteCare() {
   if (currentView === 'profile') {
     return (
       <div className="min-h-screen bg-gray-900 text-white p-4">
-        {/* Header */}
         <div className="flex items-center justify-between mb-6 pt-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center">
@@ -884,7 +971,6 @@ export default function SmartRouteCare() {
           </div>
         </div>
 
-        {/* Profile Card */}
         <div className="bg-gray-800 rounded-2xl p-6 mb-6">
           <div className="flex items-center gap-4 mb-6">
             <div className="w-20 h-20 bg-gray-700 rounded-full flex items-center justify-center">
@@ -896,7 +982,6 @@ export default function SmartRouteCare() {
             </div>
           </div>
 
-          {/* QR Code Section */}
           <div className="bg-white rounded-lg p-4 mb-6">
             <div className="w-32 h-32 mx-auto bg-gray-200 flex items-center justify-center">
               <p className="text-gray-500 text-xs text-center">QR Code<br/>Placeholder</p>
@@ -904,7 +989,6 @@ export default function SmartRouteCare() {
             <p className="text-center text-gray-600 text-sm mt-2">Membership no: {userData?.id}</p>
           </div>
 
-          {/* Personal Information */}
           <div className="space-y-4">
             <h3 className="text-lg font-semibold mb-3">Personal Information</h3>
             
@@ -935,7 +1019,6 @@ export default function SmartRouteCare() {
           </div>
         </div>
 
-        {/* Emergency Contact Button */}
         <button 
           onClick={() => alert(`Emergency call to ${userData?.caregiverName}: ${userData?.caregiverPhone}`)}
           className="w-full bg-red-600 hover:bg-red-700 py-4 rounded-xl font-semibold flex items-center justify-center gap-2"
