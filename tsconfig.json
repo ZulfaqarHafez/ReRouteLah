@@ -19,7 +19,15 @@
       }
     ],
     "paths": {
-      "@/*": ["./*"]
+      // ⚠️ IMPORTANT: Change the base alias to look inside the new 'src' directory
+      "@/*": ["./src/*"],
+      // Keep old aliases pointing to 'src' subdirectories for shadcn compatibility
+      "@/components/*": ["./src/components/*"],
+      "@/lib/*": ["./src/lib/*"],
+      "@/hooks/*": ["./src/hooks/*"],
+      "@/contexts/*": ["./src/contexts/*"],
+      "@/pages/*": ["./src/pages/*"],
+      "@/utils": ["./src/lib/utils"]
     }
   },
   "include": [
@@ -29,6 +37,6 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
     "**/*.mts"
-  ],
+, "tailwind.config.js"  ],
   "exclude": ["node_modules"]
 }
