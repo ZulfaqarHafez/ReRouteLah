@@ -30,6 +30,8 @@ export interface PatientInfo {
   profile: PatientProfile;
   pairingCode: string;
   destinations: SavedDestination[];
+  isDeviated: boolean;
+  deviationDistance: number;
 }
 
 export interface CaregiverInfo {

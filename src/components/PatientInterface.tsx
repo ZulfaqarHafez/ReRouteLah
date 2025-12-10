@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { ArrowLeft, User, Volume2, VolumeX, CheckCircle, LogOut, Camera } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { SavedDestination, PatientInfo } from "@/types/app";
+import { SavedDestination, PatientInfo } from "@/types/index";
 import DestinationCard from "./DestinationCard";
 import CallGuardianButton from "./CallGuardianButton";
 import EmergencyButton from "./EmergencyButton";
@@ -14,6 +14,8 @@ import { useVoiceNavigation } from "@/hooks/useVoiceNavigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 import ARNavigation from "./ARNavigation";
+// 🟢 MERGED: Import for deviation tracking logic
+import { useSimulatedLocationTracking } from "@/hooks/useLocationTracking"; 
 
 interface PatientInterfaceProps {
   patient: PatientInfo;
@@ -27,11 +29,12 @@ interface NavigationStep {
   direction: "straight" | "left" | "right" | "bus" | "destination";
   instruction: string;
   distance?: string;
-  coordinates?: [number, number]; // 🟢 Added coordinates for AR
+  coordinates?: [number, number]; //  Added coordinates for AR
 }
 
 const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps) => {
-  const { logout } = useAuth();
+  // 🟢 MERGED: Get updateNavigationStatus from context
+  const { logout, updateNavigationStatus } = useAuth();
   const [appView, setAppView] = useState<AppView>("home");
   const [selectedDestination, setSelectedDestination] = useState<SavedDestination | null>(null);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
@@ -41,28 +44,77 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
   // AR State
   const [showAR, setShowAR] = useState(false);
   const [currentLocation, setCurrentLocation] = useState<[number, number]>(
-    patient.currentLocation || [1.3521, 103.8198]
+    patient?.currentLocation || [1.3521, 103.8198] // 🟢 Added optional chaining to prevent crash on logout
   );
-
-  // 🟢 NEW: State for dynamic route generation
+  
+  // 泙 State for dynamic route generation
   const [navigationSteps, setNavigationSteps] = useState<NavigationStep[]>([]);
   const [routePath, setRoutePath] = useState<[number, number][]>([]);
 
-  // Track location for AR
+  // 🟢 MERGED: Simulated tracking hook (drives deviation + live location)
+  const {
+    currentLocation: simulatedLocation,
+    isDeviated,
+    deviationDistance,
+    startTracking,
+    stopTracking,
+    triggerDeviation // 🟢 Uncommented to use directly
+  } = useSimulatedLocationTracking(
+    currentLocation, 
+    selectedDestination?.coordinates // Destination is dynamic
+  );
+
+  // 🟢 MERGED: Centralized location and tracking management
   useEffect(() => {
-    if ("geolocation" in navigator) {
-      const watchId = navigator.geolocation.watchPosition(
-        (position) => {
-          setCurrentLocation([position.coords.latitude, position.coords.longitude]);
-        },
-        (error) => console.error("GPS Error:", error),
-        { enableHighAccuracy: true }
-      );
-      return () => navigator.geolocation.clearWatch(watchId);
+    const isNavigatingView = appView === "navigation" || appView === "ar-guide";
+
+    if (isNavigatingView) {
+        // Start simulation when navigating
+        startTracking();
+        // Use the simulated location for the patient's current location
+        setCurrentLocation(simulatedLocation);
+    } else {
+        // If not navigating, stop tracking and use real device location
+        stopTracking();
+        if ("geolocation" in navigator) {
+            const watchId = navigator.geolocation.watchPosition(
+                (position) => {
+                    setCurrentLocation([position.coords.latitude, position.coords.longitude]);
+                },
+                (error) => {
+                    console.error("GPS Error, using default:", error);
+                },
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+            );
+            return () => navigator.geolocation.clearWatch(watchId);
+        }
     }
-  }, []);
+  }, [appView, simulatedLocation, startTracking, stopTracking]);
+
+
+  // 🟢 MERGED: Sync navigation status (including deviation) to AuthContext for caregiver view
+  const patientId = patient?.id; // Extract ID for stable dependency
+  useEffect(() => {
+    if (!patientId || !currentLocation || !updateNavigationStatus) return;
+    
+    // Only update navigation status if we are actually navigating or just stopped
+    const isNavigatingView = appView === "navigation" || appView === "ar-guide";
+    
+    updateNavigationStatus(
+      patientId,
+      isNavigatingView, 
+      isDeviated, // <--- Reports deviation status
+      deviationDistance, // <--- Reports deviation distance
+      currentLocation
+    );
+  }, [patientId, currentLocation, appView, isDeviated, deviationDistance, updateNavigationStatus]);
 
   const handleSwitchRole = () => {
+    // 🟢 CHANGED: Removed stopTracking() to persist deviation state
+    // This ensures the deviation status remains "true" in AuthContext
+    // so the caregiver receives the alert upon login.
+    stop();
+    
     logout();
     toast({
       title: "Logged out",
@@ -70,11 +122,8 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
     });
   };
 
-  // 🟢 CHANGED: Navigation steps are now generated dynamically in handleDestinationSelect
-  // to ensure they align with the AR route path.
-
   // Use patient's destinations from auth context (managed by caregiver)
-  const destinations = patient.destinations || [];
+  const destinations = patient?.destinations || []; // 🟢 Added optional chaining
 
   const handleDestinationSelect = async (destination: SavedDestination) => {
     setSelectedDestination(destination);
@@ -146,7 +195,7 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
             };
           });
 
-          // 🟢 Logic: If distance > 1.5km, generate SPECIFIC Public Transport instructions
+          // 泙 Logic: If distance > 1.5km, generate SPECIFIC Public Transport instructions
           if (totalDistance > 1500) {
             // Find split points (first 400m, last 400m)
             let startIdx = 0, endIdx = allSteps.length - 1;
@@ -246,7 +295,12 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
     setCurrentStepIndex(0);
     setShowAR(false);
     stop();
+    stopTracking(); // 🟢 MERGED: Stop location simulation
     setRoutePath([]); // Clear path
+    // 🟢 MERGED: Ensure navigation status is reset on the caregiver side too
+    if (updateNavigationStatus && patient) {
+      updateNavigationStatus(patient.id, false, false, 0, currentLocation);
+    }
   };
 
   // Auto-speak first step when navigation starts
@@ -290,6 +344,7 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
 
   // Profile view
   if (appView === "profile") {
+    if (!patient) return null; // 🟢 Safety check
     return (
       <PatientProfilePage 
         patient={patient} 
@@ -297,6 +352,9 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
       />
     );
   }
+
+  // 🟢 Safety check: If patient data is missing (e.g. during logout), don't render
+  if (!patient) return null;
 
   if (appView === "navigation" && selectedDestination) {
     return (
@@ -309,7 +367,7 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
               routePath={routePath}
               onClose={() => setShowAR(false)}
             />
-            {/* 🟢 NEW: Button to return to standard direction guide */}
+            {/* 泙 NEW: Button to return to standard direction guide */}
             <div className="fixed bottom-8 left-0 right-0 z-[60] flex justify-center px-4">
                <Button 
                  onClick={() => setShowAR(false)}
@@ -329,14 +387,28 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
               <ArrowLeft className="h-5 w-5 mr-2" />
               Back
             </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={toggleVoice}
-              className={voiceEnabled ? "bg-primary text-primary-foreground" : ""}
-            >
-              {voiceEnabled ? <Volume2 className="h-5 w-5" /> : <VolumeX className="h-5 w-5" />}
-            </Button>
+            
+            {/* 🟢 NEW: Allow switching role during navigation to test alerts */}
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={handleSwitchRole}
+                className="border-2 border-red-100 hover:bg-red-50"
+                title="Switch Role (Test Alert)"
+              >
+                <LogOut className="h-5 w-5 text-red-500" />
+              </Button>
+
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={toggleVoice}
+                className={voiceEnabled ? "bg-primary text-primary-foreground" : ""}
+              >
+                {voiceEnabled ? <Volume2 className="h-5 w-5" /> : <VolumeX className="h-5 w-5" />}
+              </Button>
+            </div>
           </div>
 
           {/* Destination Header */}
@@ -358,7 +430,7 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
             <Camera className="h-7 w-7 mr-3" />
             View Live AR Guide
           </Button>
-
+          
           {/* Progress indicator */}
           <div className="flex items-center justify-center gap-2 py-2">
             {navigationSteps.map((_, index) => (
@@ -386,6 +458,22 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
                 isSpeaking={isSpeaking && index === currentStepIndex}
               />
             ))}
+          </div>
+
+          {/* 🟢 NEW: Simulation Button for Testing Deviation (Fixed Render Error) */}
+          <div className="py-2">
+            <Button 
+               variant="outline" 
+               className="w-full border-red-200 text-red-600 hover:bg-red-50"
+               onClick={() => {
+                 if (triggerDeviation) {
+                   triggerDeviation();
+                   toast({ title: "Simulation", description: "Deviation triggered!" });
+                 }
+               }}
+             >
+               ⚠️ Simulate Deviation (Test)
+             </Button>
           </div>
 
           {/* Next Step / Complete Button */}
@@ -441,7 +529,7 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
         <div className="flex items-center justify-between">
           <div className="space-y-2">
             <h1 className="text-3xl font-extrabold text-foreground">
-              Hello, {patient.name}! 👋
+              Hello, {patient.name}! 
             </h1>
             <p className="text-lg text-muted-foreground">
               Where would you like to go today?

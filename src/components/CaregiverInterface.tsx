@@ -1,4 +1,4 @@
-// src/components/CaregiverInterface.tsx (CORRECTED CODE)
+// src/components/CaregiverInterface.tsx (MERGED CODE)
 'use client';
 
 import { useState, useEffect, useCallback } from "react";
@@ -7,15 +7,14 @@ import { Button } from "@/components/ui/button";
 import { CaregiverInfo, PatientInfo, SavedDestination } from "@/types";
 import { toast } from "@/hooks/use-toast";
 import PatientStatusCard from "./PatientStatusCard";
-// REMOVE: import MapDisplay from "./MapDisplay"; 
 import DeviationAlert from "./DeviationAlert";
 import LiveLocationBanner from "./LiveLocationBanner";
 import DestinationManager from "./DestinationManager";
 import LinkPatientDialog from "./LinkPatientDialog";
-import { useSimulatedLocationTracking } from "@/hooks/useLocationTracking";
+// 🔴 REMOVED: useSimulatedLocationTracking import (belongs on patient side)
 import { useAuth } from "@/contexts/AuthContext";
 
-// 👈 CRITICAL FIX: Use dynamic import to prevent SSR crash 
+// 争 CRITICAL FIX: Use dynamic import to prevent SSR crash 
 import dynamic from 'next/dynamic';
 const DynamicMapDisplay = dynamic(() => import('./MapDisplay'), {
   ssr: false, // Disables server-side rendering
@@ -35,87 +34,88 @@ const CaregiverInterface = ({
   activePatient,
   patientDestination
 }: CaregiverInterfaceProps) => {
-  const { logout } = useAuth();
+  // 🟢 MERGED: Get caregiverData from AuthContext to check all patients' status
+  const { logout, caregiverData } = useAuth(); 
   const [view, setView] = useState<CaregiverView>("dashboard");
-  const [showDeviationAlert, setShowDeviationAlert] = useState(false);
+  // 🔴 REMOVED: showDeviationAlert state, now derived from caregiverData
   const [selectedPatientForDestinations, setSelectedPatientForDestinations] = useState<PatientInfo | null>(null);
-
-  // 🟢 CHANGED: Use state for location to allow real GPS updates
-  const [patientLocation, setPatientLocation] = useState<[number, number]>(
+  
+  // 🟢 MERGED: Use state for map center location (Caregiver's location)
+  const [caregiverLocation, setCaregiverLocation] = useState<[number, number]>(
     activePatient?.currentLocation || [1.3521, 103.8198]
   );
+  const [selectedPatientForMap, setSelectedPatientForMap] = useState<PatientInfo | null>(activePatient);
 
-  // 🟢 NEW: Get real device location for accurate demo
+  // 泙 Get real device location for map fallback
   useEffect(() => {
     if ("geolocation" in navigator) {
-      // Use watchPosition instead of getCurrentPosition for better accuracy over time
       const watchId = navigator.geolocation.watchPosition(
         (position) => {
-          setPatientLocation([position.coords.latitude, position.coords.longitude]);
+          setCaregiverLocation([position.coords.latitude, position.coords.longitude]);
         },
         (error) => {
           console.log("Could not get location, using default:", error);
         },
         {
-          enableHighAccuracy: true, // Request best possible accuracy
+          enableHighAccuracy: true,
           timeout: 10000,
           maximumAge: 0
         }
       );
-
-      // Cleanup watcher when component unmounts
       return () => navigator.geolocation.clearWatch(watchId);
     }
   }, []);
 
-  // Use a mock deviation distance for the alert demo
-  const deviationDistance = 150; 
-  
-  // Handle deviation callback
-  const handleDeviation = useCallback((distance: number, location: [number, number]) => {
-    if (activePatient && activePatient.isNavigating) {
-      toast({
-        title: `${activePatient.name} is off course!`,
-        description: `${activePatient.name} has deviated by ${Math.round(distance)}m.`,
-        variant: "destructive",
-      });
-      setShowDeviationAlert(true);
-    }
-  }, [activePatient]);
+  // 🟢 MERGED: Derive the currently deviated patient from global state
+  const deviatedPatient = caregiverData?.patients.find((p) => p.isDeviated);
 
-  // Hook not used, so mocking tracking logic
-  // const { isDeviated, triggerDeviation } = useSimulatedLocationTracking({
-  //   destinationLocation: patientDestination?.coordinates,
-  //   onDeviation: handleDeviation,
-  // });
-  
-  // Mock tracking variables for compilation
-  const isDeviated = false;
-  // const triggerDeviation = () => {};
+  // 🔴 REMOVED: Mock deviation variables and useCallback handler
 
-  useEffect(() => {
-    // Automatically switch to map view when a deviation alert shows
-    if (showDeviationAlert) {
-      setView("map");
-    }
-  }, [showDeviationAlert]);
-
-  const handleViewOnMap = () => {
-    setView("map");
-    setShowDeviationAlert(false);
-  };
-
-  const handleCallPatient = () => {
-    if (activePatient?.profile.phone) {
-      window.location.href = `tel:${activePatient.profile.phone}`;
-    }
+  // 🟢 MERGED: Handle Dismiss (Acknowledge alert, but status remains until patient is back on route)
+  const handleDismissAlert = () => {
     toast({
-      title: `Calling ${activePatient?.name}...`,
-      description: "Attempting to contact the traveler now.",
+      title: "Alert acknowledged",
+      description:
+        "The traveler is still off route. The status will be cleared only when they return to the correct path.",
+      variant: "info",
     });
   };
 
+  const handleViewOnMap = () => {
+    // 🟢 MERGED: If there's a deviated patient, always focus map on them
+    if (deviatedPatient) {
+      setSelectedPatientForMap(deviatedPatient);
+    } else if (activePatient) {
+      setSelectedPatientForMap(activePatient);
+    }
+    setView("map");
+  };
+
+  // 🟢 MERGED: Robust Call Logic (Prioritizes the deviated patient)
+  const handleCallPatient = () => {
+    // Priority: 1. Deviated Patient, 2. Active Patient, 3. First Patient in the list
+    const patientToCall = deviatedPatient || activePatient || caregiver?.patients?.[0];
+    const phone = patientToCall?.profile?.phone;
+
+    if (phone) {
+      window.location.href = `tel:${phone}`;
+      toast({
+        title: "Calling traveler...",
+        description: `Attempting to contact ${patientToCall?.name || "traveler"}.`,
+      });
+    } else {
+      toast({
+        title: "Phone number not available",
+        description: "No contact number is linked to this traveler.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const renderContent = () => {
+    // Determine the patient whose data should be displayed on the map/status
+    const patientInFocus = selectedPatientForMap || activePatient || deviatedPatient || caregiver.patients[0];
+    
     switch (view) {
       case "camera":
         return (
@@ -216,16 +216,18 @@ const CaregiverInterface = ({
             </div>
 
             <LiveLocationBanner
-              patientName={activePatient?.name || "Traveler"}
-              isNavigating={activePatient?.isNavigating || false}
-              isDeviated={isDeviated}
+              patientName={patientInFocus?.name || "Traveler"}
+              isNavigating={patientInFocus?.isNavigating || false}
+              // 🟢 MERGED: Use the actual patient's deviation status
+              isDeviated={patientInFocus?.isDeviated || false} 
               lastUpdated={new Date()}
             />
-            {/* 👈 CRITICAL: Use the dynamic component here */}
+            {/* 争 CRITICAL: Use the dynamic component here */}
             <div className="h-5/6 shadow-2xl rounded-xl overflow-hidden">
               <DynamicMapDisplay
-                userLat={patientLocation[0]}
-                userLng={patientLocation[1]}
+                // 🟢 MERGED: Use the focused patient's location or the caregiver's location
+                userLat={patientInFocus?.currentLocation?.[0] ?? caregiverLocation[0]} 
+                userLng={patientInFocus?.currentLocation?.[1] ?? caregiverLocation[1]}
                 destLat={patientDestination?.coordinates?.[0]}
                 destLng={patientDestination?.coordinates?.[1]}
               />
@@ -238,7 +240,7 @@ const CaregiverInterface = ({
                   onClick={handleCallPatient}
                 >
                   <Phone className="h-5 w-5 mr-2" />
-                  Call {activePatient?.name || "Traveler"}
+                  Call {patientInFocus?.name || "Traveler"}
                 </Button>
             </div>
           </div>
@@ -251,7 +253,8 @@ const CaregiverInterface = ({
             <LiveLocationBanner
               patientName={activePatient?.name || "Traveler"}
               isNavigating={activePatient?.isNavigating || false}
-              isDeviated={isDeviated}
+              // 🟢 MERGED: Use the actual patient's deviation status
+              isDeviated={activePatient?.isDeviated || false} 
               lastUpdated={new Date()}
             />
             
@@ -263,7 +266,8 @@ const CaregiverInterface = ({
                 patient={activePatient}
                 destination={patientDestination}
                 onViewOnMap={handleViewOnMap}
-                isDeviated={isDeviated}
+                // 🟢 MERGED: Use the actual patient's deviation status
+                isDeviated={activePatient?.isDeviated || false} 
               />
             )}
 
@@ -308,20 +312,24 @@ const CaregiverInterface = ({
 
   return (
     <div className="min-h-screen pb-8 pt-4">
-      <div className="px-4">
-        {renderContent()}
-      </div>
-
-      {/* Deviation Alert Modal */}
-      {showDeviationAlert && activePatient && (
+      
+      {/* 🟢 MERGED: GLOBAL DEVIATION ALERT (always on top of the layout) */}
+      {deviatedPatient && (
         <DeviationAlert
-          patient={activePatient}
-          deviationDistance={deviationDistance}
-          onDismiss={() => setShowDeviationAlert(false)}
-          onViewOnMap={handleViewOnMap}
+          patient={deviatedPatient}
+          deviationDistance={deviatedPatient.deviationDistance}
+          onDismiss={handleDismissAlert}
+          onViewOnMap={() => {
+            setSelectedPatientForMap(deviatedPatient);
+            setView("map");
+          }}
           onCallPatient={handleCallPatient}
         />
       )}
+
+      <div className="px-4">
+        {renderContent()}
+      </div>
     </div>
   );
 };

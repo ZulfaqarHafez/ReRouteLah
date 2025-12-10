@@ -1,4 +1,4 @@
-import { UserRole } from "@/types/app";
+import { UserRole } from "@/types/index";
 import { User, Heart } from "lucide-react";
 
 interface RoleSwitcherProps {

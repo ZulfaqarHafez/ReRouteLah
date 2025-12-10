@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { AuthSession, UserRole, PatientInfo, CaregiverInfo, SavedDestination } from '@/types';
 import { mockSavedDestinations } from '@/data/mockData';
+import { toast } from "@/hooks/use-toast"; // 🟢 Added import
 
 interface AuthContextType {
   session: AuthSession | null;
@@ -12,6 +13,13 @@ interface AuthContextType {
   login: (role: UserRole, name: string, phone?: string, pairingCode?: string) => void;
   logout: () => void;
   updatePatientDestinations: (patientId: string, destinations: SavedDestination[]) => void;
+  updateNavigationStatus: (
+    patientId: string,
+    isNavigating: boolean,
+    isDeviated: boolean,
+    deviationDistance: number,
+    currentLocation: [number, number]
+  ) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -113,16 +121,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       } else { // Role is 'caregiver'
       
-      // 💡 CRITICAL: Auto-link to the first existing patient for simulation
-      const firstPatient = allPatients[0];
-      const linkedPatientIds = firstPatient ? [firstPatient.id] : [];
+      // 🟢 CHANGED: Find ANY deviated patient to ensure alert works regardless of which patient was used
+      const deviatedPatient = allPatients.find(p => p.isDeviated);
+      
+      // 💡 CRITICAL: Auto-link to the deviated patient if one exists, otherwise the first one
+      const targetPatient = deviatedPatient || allPatients[0];
+      const linkedPatientIds = targetPatient ? [targetPatient.id] : [];
       
       const newCaregiver: CaregiverInfo = {
         id: userId,
         name,
         phone: phone || '',
-        patients: firstPatient ? [firstPatient] : [], // Populate patient list immediately
+        patients: targetPatient ? [targetPatient] : [], // Populate patient list immediately
       };
+
+      // 🟢 NEW: Check for deviation immediately upon login and notify
+      if (deviatedPatient) {
+        setTimeout(() => {
+          toast({
+            title: "⚠️ Alert: Patient Deviation Detected",
+            description: `${deviatedPatient.name} is currently off-route by ${Math.round(deviatedPatient.deviationDistance || 0)}m.`,
+            variant: "destructive",
+            duration: 5000,
+          });
+        }, 800); // Slight delay to ensure UI is mounted
+      }
 
       const savedCaregivers = localStorage.getItem(CAREGIVERS_KEY);
       const caregivers: CaregiverInfo[] = savedCaregivers ? JSON.parse(savedCaregivers) : [];
@@ -166,6 +189,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // src/contexts/AuthContext.tsx - inside AuthProvider
+
+  const updateNavigationStatus = React.useCallback((
+    patientId: string,
+    isNavigating: boolean,
+    isDeviated: boolean,
+    deviationDistance: number,
+    currentLocation: [number, number]
+  ) => {
+    // 1. Update allPatients list and localStorage using functional update
+    setAllPatients(prevPatients => {
+      const updatedPatients = prevPatients.map(p =>
+        p.id === patientId
+          ? { ...p, isNavigating, isDeviated, deviationDistance, currentLocation }
+          : p
+      );
+      // Side effect inside setState callback is generally discouraged but necessary here to ensure sync with state
+      localStorage.setItem(PATIENTS_KEY, JSON.stringify(updatedPatients));
+      return updatedPatients;
+    });
+
+    // 2. Update current patientData state (if logged in as the patient)
+    setPatientData(prev => {
+      if (prev?.id === patientId) {
+        return {
+          ...prev,
+          isNavigating,
+          isDeviated,
+          deviationDistance,
+          currentLocation
+        };
+      }
+      return prev;
+    });
+
+    // 3. Update caregiver's view of linked patients
+    setCaregiverData(prev => {
+      if (prev) {
+        const updatedCaregiverPatients = prev.patients.map(p =>
+          p.id === patientId ? { ...p, isNavigating, isDeviated, deviationDistance, currentLocation } : p
+        );
+        return { ...prev, patients: updatedCaregiverPatients };
+      }
+      return prev;
+    });
+  }, []); // Empty dependency array ensures stable reference
+
   return (
     <AuthContext.Provider
       value={{
@@ -175,7 +245,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         allPatients,
         login,
         logout,
-        updatePatientDestinations
+        updatePatientDestinations,
+        updateNavigationStatus // 🟢 Added to exposed context value
       }}
     >
       {children}
