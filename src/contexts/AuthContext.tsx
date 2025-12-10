@@ -14,8 +14,8 @@ interface AuthContextType {
   allPatients: PatientInfo[];
   login: (role: UserRole, name: string, phone?: string, pairingCode?: string) => void;
   logout: () => void;
-  linkPatient: (pairingCode: string) => boolean;
-  getPatientByCode: (pairingCode: string) => PatientInfo | null;
+  linkPatient: (pairingCode: string) => Promise<boolean>;
+  getPatientByCode: (pairingCode: string) => Promise<PatientInfo | null>;
   updatePatientDestinations: (patientId: string, destinations: SavedDestination[]) => void;
   updateNavigationStatus: (
     patientId: string,
@@ -24,6 +24,7 @@ interface AuthContextType {
     deviationDistance: number,
     currentLocation: [number, number]
   ) => void;
+  notifyDestinationSelected: (patientId: string, destination: SavedDestination) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -95,47 +96,97 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [caregiverData, setCaregiverData] = useState<CaregiverInfo | null>(null);
   const [allPatients, setAllPatients] = useState<PatientInfo[]>([]);
 
-  // Load data from localStorage on mount
+  // 🔵 Restore session from localStorage and fetch data from Supabase
   useEffect(() => {
-    const savedSession = localStorage.getItem(STORAGE_KEY);
-    const savedPatients = localStorage.getItem(PATIENTS_KEY);
-    const savedCaregivers = localStorage.getItem(CAREGIVERS_KEY);
+    const restoreSession = async () => {
+      const savedSession = localStorage.getItem(STORAGE_KEY);
 
-    if (savedPatients) {
-      setAllPatients(JSON.parse(savedPatients));
-    }
+      if (!savedSession) return;
 
-    if (savedSession) {
       const parsedSession: AuthSession = JSON.parse(savedSession);
       setSession(parsedSession);
 
-      if (parsedSession.role === 'patient' && savedPatients) {
-        const patients: PatientInfo[] = JSON.parse(savedPatients);
-        const patient = patients.find(p => p.id === parsedSession.userId);
-        if (patient) setPatientData(patient);
-      }
+      try {
+        if (parsedSession.role === 'patient') {
+          // Fetch patient data from Supabase
+          const { data: patient, error } = await supabase
+            .from('patients')
+            .select('*')
+            .eq('id', parsedSession.userId)
+            .single();
 
-      if (parsedSession.role === 'caregiver' && savedCaregivers) {
-        const caregivers: CaregiverInfo[] = JSON.parse(savedCaregivers);
-        const caregiver = caregivers.find(c => c.id === parsedSession.userId);
-        if (caregiver) {
-          // Populate linked patients
-          const patients: PatientInfo[] = savedPatients ? JSON.parse(savedPatients) : [];
-          const linkedPatients = patients.filter(p => 
-            parsedSession.linkedPatients?.includes(p.id)
-          );
-          setCaregiverData({ ...caregiver, patients: linkedPatients });
+          if (error) {
+            console.error('Error fetching patient:', error);
+            // Session invalid, clear it
+            localStorage.removeItem(STORAGE_KEY);
+            setSession(null);
+            return;
+          }
+
+          if (patient) {
+            const patientInfo = await dbPatientToPatientInfo(patient, true);
+            setPatientData(patientInfo);
+            setAllPatients([patientInfo]);
+          }
         }
-      }
-    }
-  }, []);
 
-  // Persist patients when they change
-  useEffect(() => {
-    if (allPatients.length > 0) {
-      localStorage.setItem(PATIENTS_KEY, JSON.stringify(allPatients));
-    }
-  }, [allPatients]);
+        if (parsedSession.role === 'caregiver') {
+          // Fetch caregiver data from Supabase
+          const { data: caregiver, error: caregiverError } = await supabase
+            .from('caregivers')
+            .select('*')
+            .eq('id', parsedSession.userId)
+            .single();
+
+          if (caregiverError) {
+            console.error('Error fetching caregiver:', caregiverError);
+            localStorage.removeItem(STORAGE_KEY);
+            setSession(null);
+            return;
+          }
+
+          // Fetch all patients (for linking purposes)
+          const { data: allPatientsData } = await supabase
+            .from('patients')
+            .select('*');
+
+          const allPatientInfos = allPatientsData
+            ? await Promise.all(allPatientsData.map(p => dbPatientToPatientInfo(p, false)))
+            : [];
+
+          setAllPatients(allPatientInfos);
+
+          // Fetch only linked patients
+          const { data: linkedPatientsData } = await supabase
+            .from('patients')
+            .select('*')
+            .eq('caregiver_id', caregiver.id);
+
+          const linkedPatientInfos = linkedPatientsData
+            ? await Promise.all(linkedPatientsData.map(p => dbPatientToPatientInfo(p, true)))
+            : [];
+
+          setCaregiverData({
+            id: caregiver.id,
+            name: caregiver.name,
+            phone: caregiver.phone || '',
+            patients: linkedPatientInfos,
+          });
+
+          toast({
+            title: "Welcome back!",
+            description: `Logged in as ${caregiver.name}`,
+          });
+        }
+      } catch (error) {
+        console.error('Error restoring session:', error);
+        localStorage.removeItem(STORAGE_KEY);
+        setSession(null);
+      }
+    };
+
+    restoreSession();
+  }, []);
 
   // 🔵 NEW: Real-time subscription for caregivers to get patient updates
   useEffect(() => {
@@ -224,69 +275,102 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (role: UserRole, name: string, phone: string = "") => {
     try {
       if (role === 'patient') {
-        // 🔵 Create patient in Supabase
-        const pairingCode = generateCode(); // Generate 6-character pairing code
-        const { data: newPatient, error} = await supabase
+        // 🔵 Check if patient already exists
+        const { data: existingPatient } = await supabase
           .from('patients')
-          .insert({
-            name,
-            avatar: '👤',
-            phone: phone || null,
-            guardian_phone: phone || null,
-            pairing_code: pairingCode,
-            current_location: coordinatesToPoint([1.3521, 103.8198]),
-            is_navigating: false,
-            is_deviated: false,
-            deviation_distance: 0,
-          })
-          .select()
+          .select('*')
+          .eq('name', name)
           .single();
 
-        if (error) {
-          console.error('Error creating patient:', error);
+        let patient;
+        if (existingPatient) {
+          // Patient exists, log them in
+          patient = existingPatient;
           toast({
-            title: "Error creating patient",
-            description: error.message,
-            variant: "destructive",
+            title: "Welcome back!",
+            description: `Logged in as ${name}`,
           });
-          return;
+        } else {
+          // Create new patient
+          const pairingCode = generateCode();
+          const { data: newPatient, error } = await supabase
+            .from('patients')
+            .insert({
+              name,
+              avatar: '👤',
+              phone: phone || null,
+              guardian_phone: phone || null,
+              pairing_code: pairingCode,
+              current_location: coordinatesToPoint([1.3521, 103.8198]),
+              is_navigating: false,
+              is_deviated: false,
+              deviation_distance: 0,
+            })
+            .select()
+            .single();
+
+          if (error) {
+            console.error('Error creating patient:', error);
+            toast({
+              title: "Error creating patient",
+              description: error.message,
+              variant: "destructive",
+            });
+            return;
+          }
+
+          patient = newPatient;
+          toast({
+            title: "Welcome!",
+            description: `Patient account created for ${name}`,
+          });
         }
 
         // Convert to PatientInfo
-        const patientInfo = await dbPatientToPatientInfo(newPatient);
+        const patientInfo = await dbPatientToPatientInfo(patient);
 
         setPatientData(patientInfo);
         setAllPatients(prev => [...prev, patientInfo]);
 
-        const newSession: AuthSession = { role, userId: newPatient.id };
+        const newSession: AuthSession = { role, userId: patient.id };
         setSession(newSession);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(newSession));
 
-        toast({
-          title: "Welcome!",
-          description: `Patient account created for ${name}`,
-        });
-
       } else {
         // Role is 'caregiver'
-        // 🔵 Create caregiver in Supabase
-        const { data: newCaregiver, error: caregiverError } = await supabase
+        // 🔵 Check if caregiver already exists
+        const { data: existingCaregiver } = await supabase
           .from('caregivers')
-          .insert({
-            name,
-            phone: phone || null,
-          })
-          .select()
+          .select('*')
+          .eq('name', name)
           .single();
 
-        if (caregiverError) {
-          console.error('Error creating caregiver:', caregiverError);
-          toast({
-            title: "Error creating caregiver",
-            description: caregiverError.message,
-            variant: "destructive",
-          });
-          return;
+        let caregiver;
+        if (existingCaregiver) {
+          // Caregiver exists, log them in
+          caregiver = existingCaregiver;
+        } else {
+          // Create new caregiver
+          const { data: newCaregiver, error: caregiverError } = await supabase
+            .from('caregivers')
+            .insert({
+              name,
+              phone: phone || null,
+            })
+            .select()
+            .single();
+
+          if (caregiverError) {
+            console.error('Error creating caregiver:', caregiverError);
+            toast({
+              title: "Error creating caregiver",
+              description: caregiverError.message,
+              variant: "destructive",
+            });
+            return;
+          }
+
+          caregiver = newCaregiver;
         }
 
         // 🔵 Fetch all patients from database
@@ -307,16 +391,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { data: linkedPatients } = await supabase
           .from('patients')
           .select('*')
-          .eq('caregiver_id', newCaregiver.id);
+          .eq('caregiver_id', caregiver.id);
 
         const linkedPatientInfos = linkedPatients
           ? await Promise.all(linkedPatients.map(p => dbPatientToPatientInfo(p, true)))
           : [];
 
         const caregiverInfo: CaregiverInfo = {
-          id: newCaregiver.id,
-          name: newCaregiver.name,
-          phone: newCaregiver.phone || '',
+          id: caregiver.id,
+          name: caregiver.name,
+          phone: caregiver.phone || '',
           patients: linkedPatientInfos, // Only show linked patients
         };
 
@@ -338,15 +422,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         const newSession: AuthSession = {
           role,
-          userId: newCaregiver.id,
+          userId: caregiver.id,
           linkedPatients: linkedPatientInfos.map(p => p.id),
         };
         setSession(newSession);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(newSession));
 
         toast({
-          title: "Welcome!",
-          description: `Caregiver account created for ${name}`,
+          title: existingCaregiver ? "Welcome back!" : "Welcome!",
+          description: existingCaregiver
+            ? `Logged in as ${name}`
+            : `Caregiver account created for ${name}`,
         });
       }
     } catch (error) {
@@ -366,8 +452,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(STORAGE_KEY);
   };
 
-  const getPatientByCode = (pairingCode: string): PatientInfo | null => {
-    return allPatients.find(p => p.pairingCode === pairingCode) || null;
+  const getPatientByCode = async (pairingCode: string): Promise<PatientInfo | null> => {
+    try {
+      // Search directly in Supabase instead of memory
+      const { data: patient, error } = await supabase
+        .from('patients')
+        .select('*')
+        .eq('pairing_code', pairingCode.toUpperCase())
+        .single();
+
+      if (error || !patient) {
+        return null;
+      }
+
+      // Convert to PatientInfo
+      const patientInfo = await dbPatientToPatientInfo(patient, false);
+      return patientInfo;
+    } catch (error) {
+      console.error('Error finding patient by code:', error);
+      return null;
+    }
   };
 
   const linkPatient = async (pairingCode: string): Promise<boolean> => {
@@ -506,19 +610,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   ) => {
     try {
       // 🔵 Update in Supabase first
+      // Build update object conditionally based on what columns exist
+      const updateData: any = {
+        is_navigating: isNavigating,
+        is_deviated: isDeviated,
+        deviation_distance: deviationDistance,
+        current_location: coordinatesToPoint(currentLocation),
+      };
+
+      // Try to add last_location_update, but don't fail if column doesn't exist
+      try {
+        updateData.last_location_update = new Date().toISOString();
+      } catch (e) {
+        // Column might not exist yet - that's ok
+      }
+
       const { error } = await supabase
         .from('patients')
-        .update({
-          is_navigating: isNavigating,
-          is_deviated: isDeviated,
-          deviation_distance: deviationDistance,
-          current_location: coordinatesToPoint(currentLocation),
-          last_location_update: new Date().toISOString(),
-        })
+        .update(updateData)
         .eq('id', patientId);
 
       if (error) {
         console.error('Error updating patient navigation status:', error);
+        console.error('Error details:', JSON.stringify(error));
         // Continue with local update even if Supabase fails
       }
 
@@ -577,6 +691,64 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []); // Empty dependency array ensures stable reference
 
+  // 🚨 NEW: Notify caregiver when patient selects a destination
+  const notifyDestinationSelected = React.useCallback(async (
+    patientId: string,
+    destination: SavedDestination
+  ) => {
+    try {
+      // Find the patient to get their name
+      const patient = allPatients.find(p => p.id === patientId);
+      if (!patient) return;
+
+      // Log the navigation event in Supabase
+      const { error: logError } = await supabase
+        .from('navigation_events')
+        .insert({
+          patient_id: patientId,
+          event_type: 'destination_selected',
+          destination_name: destination.name,
+          destination_address: destination.address,
+          destination_coordinates: coordinatesToPoint(destination.coordinates),
+          created_at: new Date().toISOString(),
+        });
+
+      if (logError) {
+        console.error('Error logging destination selection:', logError);
+      }
+
+      // Find the caregiver linked to this patient
+      const { data: patientRecord } = await supabase
+        .from('patients')
+        .select('caregiver_id')
+        .eq('id', patientId)
+        .single();
+
+      if (patientRecord?.caregiver_id) {
+        // Create a notification for the caregiver
+        const { error: notificationError } = await supabase
+          .from('caregiver_notifications')
+          .insert({
+            caregiver_id: patientRecord.caregiver_id,
+            patient_id: patientId,
+            notification_type: 'destination_selected',
+            message: `${patient.name} is navigating to ${destination.name}`,
+            destination_name: destination.name,
+            is_read: false,
+            created_at: new Date().toISOString(),
+          });
+
+        if (notificationError) {
+          console.error('Error creating caregiver notification:', notificationError);
+        }
+      }
+
+      console.log(`✅ Caregiver notified: ${patient.name} → ${destination.name}`);
+    } catch (error) {
+      console.error('Error in notifyDestinationSelected:', error);
+    }
+  }, [allPatients]);
+
   return (
     <AuthContext.Provider
       value={{
@@ -589,7 +761,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         linkPatient,
         getPatientByCode,
         updatePatientDestinations,
-        updateNavigationStatus // 🟢 Added to exposed context value
+        updateNavigationStatus, // 🟢 Added to exposed context value
+        notifyDestinationSelected // 🚨 NEW: Caregiver destination alert
       }}
     >
       {children}

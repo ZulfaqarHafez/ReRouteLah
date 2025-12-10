@@ -1,10 +1,10 @@
-import { ArrowUp, ArrowRight, ArrowLeft, Bus, MapPin, Volume2, VolumeX } from "lucide-react";
+import { ArrowUp, ArrowRight, ArrowLeft, Bus, MapPin, Volume2, VolumeX, Train } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 interface NavigationStepCardProps {
   stepNumber: number;
-  direction: "straight" | "left" | "right" | "bus" | "destination";
+  direction: "straight" | "left" | "right" | "bus" | "mrt" | "destination";
   instruction: string;
   distance?: string;
   isActive?: boolean;
@@ -34,6 +34,8 @@ const NavigationStepCard = ({
         return <ArrowRight className={iconClass} />;
       case "bus":
         return <Bus className={iconClass} />;
+      case "mrt":
+        return <Train className={iconClass} />;
       case "destination":
         return <MapPin className={iconClass} />;
       default:
@@ -53,6 +55,8 @@ const NavigationStepCard = ({
           return "bg-amber-500 text-white";
         case "bus":
           return "bg-emerald-500 text-white";
+        case "mrt":
+          return "bg-purple-600 text-white";
         case "destination":
           return "bg-accent text-accent-foreground";
         default:

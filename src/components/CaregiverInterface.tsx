@@ -8,11 +8,13 @@ import { CaregiverInfo, PatientInfo, SavedDestination } from "@/types";
 import { toast } from "@/hooks/use-toast";
 import PatientStatusCard from "./PatientStatusCard";
 import DeviationAlert from "./DeviationAlert";
+import DestinationAlert from "./DestinationAlert";
 import LiveLocationBanner from "./LiveLocationBanner";
 import DestinationManager from "./DestinationManager";
 import LinkPatientDialog from "./LinkPatientDialog";
 // 🔴 REMOVED: useSimulatedLocationTracking import (belongs on patient side)
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
 
 // 争 CRITICAL FIX: Use dynamic import to prevent SSR crash 
 import dynamic from 'next/dynamic';
@@ -39,6 +41,17 @@ const CaregiverInterface = ({
   const [view, setView] = useState<CaregiverView>("dashboard");
   const [selectedPatientForDestinations, setSelectedPatientForDestinations] = useState<PatientInfo | null>(null);
   const [dismissedAlertPatientId, setDismissedAlertPatientId] = useState<string | null>(null);
+
+  // 🚨 NEW: Destination notification state
+  interface DestinationNotification {
+    id: string;
+    patientId: string;
+    patientName: string;
+    destinationName: string;
+    destinationAddress: string;
+    timestamp: string;
+  }
+  const [destinationNotifications, setDestinationNotifications] = useState<DestinationNotification[]>([]);
   
   // 🟢 MERGED: Use state for map center location (Caregiver's location)
   const [caregiverLocation, setCaregiverLocation] = useState<[number, number]>(
@@ -78,6 +91,74 @@ const CaregiverInterface = ({
     }
   }, [deviatedPatient, dismissedAlertPatientId]);
 
+  // 🚨 NEW: Subscribe to destination notifications
+  useEffect(() => {
+    if (!caregiver?.id) return;
+
+    // Fetch existing unread notifications
+    const fetchNotifications = async () => {
+      const { data, error } = await supabase
+        .from('caregiver_notifications')
+        .select('*')
+        .eq('caregiver_id', caregiver.id)
+        .eq('notification_type', 'destination_selected')
+        .eq('is_read', false)
+        .order('created_at', { ascending: false });
+
+      if (data && !error) {
+        const notifications: DestinationNotification[] = data.map((notif: any) => ({
+          id: notif.id,
+          patientId: notif.patient_id,
+          patientName: caregiverData?.patients.find(p => p.id === notif.patient_id)?.name || 'Patient',
+          destinationName: notif.destination_name || 'Unknown Destination',
+          destinationAddress: notif.message || '',
+          timestamp: notif.created_at,
+        }));
+        setDestinationNotifications(notifications);
+      }
+    };
+
+    fetchNotifications();
+
+    // Subscribe to real-time notifications
+    const channel = supabase
+      .channel('destination_notifications')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'caregiver_notifications',
+          filter: `caregiver_id=eq.${caregiver.id}`,
+        },
+        (payload: any) => {
+          const newNotif = payload.new;
+          if (newNotif.notification_type === 'destination_selected') {
+            const notification: DestinationNotification = {
+              id: newNotif.id,
+              patientId: newNotif.patient_id,
+              patientName: caregiverData?.patients.find(p => p.id === newNotif.patient_id)?.name || 'Patient',
+              destinationName: newNotif.destination_name || 'Unknown Destination',
+              destinationAddress: newNotif.message || '',
+              timestamp: newNotif.created_at,
+            };
+            setDestinationNotifications(prev => [notification, ...prev]);
+
+            // Show toast notification
+            toast({
+              title: "Patient started navigation",
+              description: newNotif.message,
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [caregiver?.id, caregiverData?.patients]);
+
   // 🟢 MERGED: Handle Dismiss (Acknowledge alert and hide it)
   const handleDismissAlert = () => {
     if (deviatedPatient) {
@@ -87,6 +168,27 @@ const CaregiverInterface = ({
       title: "Alert dismissed",
       description: "You can view the patient's status on the dashboard.",
     });
+  };
+
+  // 🚨 NEW: Handle dismiss destination notification
+  const handleDismissDestinationNotification = async (notificationId: string) => {
+    // Mark as read in database
+    await supabase
+      .from('caregiver_notifications')
+      .update({ is_read: true })
+      .eq('id', notificationId);
+
+    // Remove from local state
+    setDestinationNotifications(prev => prev.filter(n => n.id !== notificationId));
+  };
+
+  // 🚨 NEW: View patient's destination on map
+  const handleViewDestinationOnMap = (patientId: string) => {
+    const patient = caregiverData?.patients.find(p => p.id === patientId);
+    if (patient) {
+      setSelectedPatientForMap(patient);
+      setView("map");
+    }
   };
 
   const handleViewOnMap = () => {
@@ -279,10 +381,27 @@ const CaregiverInterface = ({
               patientName={activePatient?.name || "Traveler"}
               isNavigating={activePatient?.isNavigating || false}
               // 🟢 MERGED: Use the actual patient's deviation status
-              isDeviated={activePatient?.isDeviated || false} 
+              isDeviated={activePatient?.isDeviated || false}
               lastUpdated={new Date()}
             />
-            
+
+            {/* 🚨 NEW: Destination Notifications */}
+            {destinationNotifications.length > 0 && (
+              <div className="space-y-3">
+                {destinationNotifications.map((notification) => (
+                  <DestinationAlert
+                    key={notification.id}
+                    patientName={notification.patientName}
+                    destinationName={notification.destinationName}
+                    destinationAddress={notification.destinationAddress}
+                    timestamp={notification.timestamp}
+                    onDismiss={() => handleDismissDestinationNotification(notification.id)}
+                    onViewMap={() => handleViewDestinationOnMap(notification.patientId)}
+                  />
+                ))}
+              </div>
+            )}
+
             <LinkPatientDialog />
 
             {/* Traveler Status Card */}

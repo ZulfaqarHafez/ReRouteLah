@@ -8,6 +8,7 @@ import DestinationCard from "./DestinationCard";
 import CallGuardianButton from "./CallGuardianButton";
 import EmergencyButton from "./EmergencyButton";
 import BusArrivalCard from "./BusArrivalCard";
+import MRTArrivalCard from "./MRTArrivalCard";
 import PatientProfilePage from "./PatientProfilePage";
 import NavigationStepCard from "./NavigationStepCard";
 import PairingCodeCard from "./PairingCodeCard";
@@ -16,7 +17,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 import ARNavigation from "./ARNavigation";
 // 🟢 MERGED: Import for deviation tracking logic
-import { useSimulatedLocationTracking } from "@/hooks/useLocationTracking"; 
+import { useSimulatedLocationTracking } from "@/hooks/useLocationTracking";
+import { findNearestSafePoint } from "@/services/safePointsService"; 
 
 interface PatientInterfaceProps {
   patient: PatientInfo;
@@ -27,7 +29,7 @@ type AppView = "home" | "navigation" | "profile";
 
 interface NavigationStep {
   id: number;
-  direction: "straight" | "left" | "right" | "bus" | "destination";
+  direction: "straight" | "left" | "right" | "bus" | "mrt" | "destination";
   instruction: string;
   distance?: string;
   coordinates?: [number, number]; //  Added coordinates for AR
@@ -35,7 +37,7 @@ interface NavigationStep {
 
 const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps) => {
   // 🟢 MERGED: Get updateNavigationStatus from context
-  const { logout, updateNavigationStatus } = useAuth();
+  const { logout, updateNavigationStatus, notifyDestinationSelected } = useAuth();
   const [appView, setAppView] = useState<AppView>("home");
   const [selectedDestination, setSelectedDestination] = useState<SavedDestination | null>(null);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
@@ -138,11 +140,61 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
   // Use patient's destinations from auth context (managed by caregiver)
   const destinations = patient?.destinations || []; // 🟢 Added optional chaining
 
+  // 🆘 Emergency handler: Find nearest safe point and auto-navigate
+  const handleEmergency = async () => {
+    try {
+      toast({
+        title: "Finding safe location...",
+        description: "Searching for nearest Dementia Go-To Point",
+      });
+
+      const safePoint = await findNearestSafePoint(currentLocation);
+
+      if (!safePoint) {
+        toast({
+          title: "No safe location found",
+          description: "Unable to find nearby dementia-friendly location. Please call your guardian.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Convert SafePoint to SavedDestination format
+      const destination: SavedDestination = {
+        id: safePoint.id,
+        name: safePoint.name,
+        address: safePoint.address,
+        coordinates: safePoint.coordinates,
+        icon: '🛡️', // Safe point icon
+      };
+
+      // Automatically start navigation to safe point
+      await handleDestinationSelect(destination);
+
+      toast({
+        title: "Navigating to safe location",
+        description: `Routing you to ${safePoint.name}`,
+      });
+    } catch (error) {
+      console.error('Emergency routing error:', error);
+      toast({
+        title: "Error",
+        description: "Failed to find safe location. Please call your guardian.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleDestinationSelect = async (destination: SavedDestination) => {
     setSelectedDestination(destination);
     setAppView("navigation");
     setCurrentStepIndex(0);
-    
+
+    // 🚨 Notify caregiver that patient selected a destination
+    if (patient?.id && notifyDestinationSelected) {
+      await notifyDestinationSelected(patient.id, destination);
+    }
+
     const start = currentLocation;
     const end = destination.coordinates;
     
@@ -171,10 +223,15 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
     // 2. Fallback to OSRM with smart processing if API failed
     if (newSteps.length === 0) {
       try {
+        // 🚶 ENHANCED: Use foot-walking profile with additional safety parameters
+        // - foot: Strictly pedestrian paths (sidewalks, footpaths, crosswalks) - NO ROADS
+        // - steps=true: Get turn-by-turn directions
+        // - continue_straight=true: Prefer continuing straight at intersections (safer for dementia patients)
+        // - annotations=true: Get additional route metadata
         const response = await fetch(
-          `https://router.project-osrm.org/route/v1/walking/${start[1]},${start[0]};${end[1]},${end[0]}?steps=true&geometries=geojson&overview=full`
+          `https://router.project-osrm.org/route/v1/foot/${start[1]},${start[0]};${end[1]},${end[0]}?steps=true&geometries=geojson&overview=full&continue_straight=true&annotations=true`
         );
-        
+
         const data = await response.json();
 
         if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
@@ -231,18 +288,18 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
             
             if (isMRT) {
                transitSteps.push({
-                 id: 0, direction: "straight", 
-                 instruction: `Walk to ${startRoad} MRT Station`, 
+                 id: 0, direction: "straight",
+                 instruction: `Walk to ${startRoad} MRT Station`,
                  distance: "5 mins", coordinates: allSteps[startIdx].coordinates
                });
                transitSteps.push({
-                 id: 0, direction: "bus", 
-                 instruction: `Take MRT (Green Line) towards ${destination.name}`, 
+                 id: 0, direction: "mrt", // 🚇 FIXED: Use "mrt" not "bus" for MRT
+                 instruction: `Take MRT (Green Line) towards ${destination.name}`,
                  distance: "4 stops", coordinates: allSteps[Math.floor((startIdx+endIdx)/2)].coordinates
                });
                transitSteps.push({
-                 id: 0, direction: "straight", 
-                 instruction: `Alight at ${endRoad} MRT Station`, 
+                 id: 0, direction: "straight",
+                 instruction: `Alight at ${endRoad} MRT Station`,
                  distance: "", coordinates: allSteps[endIdx].coordinates
                });
             } else {
@@ -393,7 +450,7 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
           </>
         )}
 
-        <div className="px-4 space-y-4">
+        <div className="px-4 space-y-4 pb-48">
           {/* Header */}
           <div className="flex items-center justify-between">
             <Button variant="ghost" onClick={handleBackToHome} className="text-muted-foreground">
@@ -435,15 +492,6 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
             </div>
           </div>
 
-          {/* AR Camera Button */}
-          <Button 
-            onClick={() => setShowAR(true)}
-            className="w-full h-16 text-xl font-bold rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg"
-          >
-            <Camera className="h-7 w-7 mr-3" />
-            View Live AR Guide
-          </Button>
-          
           {/* Progress indicator */}
           <div className="flex items-center justify-center gap-2 py-2">
             {navigationSteps.map((_, index) => (
@@ -456,57 +504,46 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
             ))}
           </div>
 
-          {/* Navigation Step Cards */}
+          {/* 📱 MOBILE-FRIENDLY: Show only current and next step */}
           <div className="space-y-4">
-            {navigationSteps.map((step, index) => (
-              <NavigationStepCard
-                key={step.id}
-                stepNumber={index + 1}
-                direction={step.direction}
-                instruction={step.instruction}
-                distance={step.distance}
-                isActive={index === currentStepIndex}
-                isCompleted={index < currentStepIndex}
-                onSpeak={() => handleSpeakStep(index)}
-                isSpeaking={isSpeaking && index === currentStepIndex}
-              />
-            ))}
+            {/* Current Step - Always visible */}
+            <NavigationStepCard
+              key={navigationSteps[currentStepIndex]?.id}
+              stepNumber={currentStepIndex + 1}
+              direction={navigationSteps[currentStepIndex]?.direction}
+              instruction={navigationSteps[currentStepIndex]?.instruction}
+              distance={navigationSteps[currentStepIndex]?.distance}
+              isActive={true}
+              isCompleted={false}
+              onSpeak={() => handleSpeakStep(currentStepIndex)}
+              isSpeaking={isSpeaking}
+            />
+
+            {/* Next Step Preview - If not last step */}
+            {currentStepIndex < navigationSteps.length - 1 && (
+              <div className="opacity-60">
+                <p className="text-sm font-semibold text-muted-foreground mb-2">Next Step:</p>
+                <NavigationStepCard
+                  key={navigationSteps[currentStepIndex + 1]?.id}
+                  stepNumber={currentStepIndex + 2}
+                  direction={navigationSteps[currentStepIndex + 1]?.direction}
+                  instruction={navigationSteps[currentStepIndex + 1]?.instruction}
+                  distance={navigationSteps[currentStepIndex + 1]?.distance}
+                  isActive={false}
+                  isCompleted={false}
+                />
+              </div>
+            )}
           </div>
 
-          {/* 🟢 NEW: Simulation Button for Testing Deviation (Fixed Render Error) */}
-          <div className="py-2">
-            <Button 
-               variant="outline" 
-               className="w-full border-red-200 text-red-600 hover:bg-red-50"
-               onClick={() => {
-                 if (triggerDeviation) {
-                   triggerDeviation();
-                   toast({ title: "Simulation", description: "Deviation triggered!" });
-                 }
-               }}
-             >
-               ⚠️ Simulate Deviation (Test)
-             </Button>
-          </div>
-
-          {/* Next Step / Complete Button */}
-          {currentStepIndex < navigationSteps.length - 1 ? (
-            <Button
-              onClick={handleNextStep}
-              className="w-full h-16 text-xl font-bold rounded-2xl bg-primary text-primary-foreground"
-            >
-              <CheckCircle className="h-7 w-7 mr-3" />
-              Done! Next Step
-            </Button>
-          ) : (
-            <Button
-              onClick={handleBackToHome}
-              className="w-full h-16 text-xl font-bold rounded-2xl bg-accent text-accent-foreground"
-            >
-              <CheckCircle className="h-7 w-7 mr-3" />
-              I Have Arrived!
-            </Button>
-          )}
+          {/* AR Camera Button */}
+          <Button
+            onClick={() => setShowAR(true)}
+            className="w-full h-16 text-xl font-bold rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg"
+          >
+            <Camera className="h-7 w-7 mr-3" />
+            View Live AR Guide
+          </Button>
 
           {/* Bus Info - show when relevant */}
           {navigationSteps[currentStepIndex]?.direction === "bus" && (
@@ -522,13 +559,50 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
             </div>
           )}
 
+          {/* 🚇 MRT Info - show when relevant */}
+          {navigationSteps[currentStepIndex]?.direction === "mrt" && (
+            <div className="space-y-3">
+              <h3 className="text-lg font-bold text-foreground">Your Train</h3>
+              <MRTArrivalCard
+                line="Green Line"
+                platform="Platform 1"
+                destination={selectedDestination.name}
+                arrivalTime="2 min"
+                nextArrival="5 min"
+                crowdLevel="medium"
+              />
+            </div>
+          )}
+
           {/* Call Guardian */}
           <CallGuardianButton guardianPhone={patient.guardianPhone} />
         </div>
 
-        {/* Emergency Button - Fixed */}
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2">
-          <EmergencyButton />
+        {/* Fixed Action Buttons at Bottom */}
+        <div className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-background via-background to-transparent pt-4 pb-6 px-4 space-y-3">
+          {/* Done! Next Step / I Have Arrived Button */}
+          {currentStepIndex < navigationSteps.length - 1 ? (
+            <Button
+              onClick={handleNextStep}
+              className="w-full h-16 text-xl font-bold rounded-2xl bg-primary hover:bg-primary/90 shadow-lg"
+            >
+              <CheckCircle className="h-7 w-7 mr-3" />
+              Done! Next Step
+            </Button>
+          ) : (
+            <Button
+              onClick={handleBackToHome}
+              className="w-full h-16 text-xl font-bold rounded-2xl bg-green-600 hover:bg-green-700 shadow-lg"
+            >
+              <CheckCircle className="h-7 w-7 mr-3" />
+              I Have Arrived!
+            </Button>
+          )}
+
+          {/* Emergency Button */}
+          <div className="flex justify-center">
+            <EmergencyButton onEmergency={handleEmergency} />
+          </div>
         </div>
       </div>
     );
@@ -603,7 +677,7 @@ const PatientInterface = ({ patient, onNavigationStart }: PatientInterfaceProps)
 
       {/* Emergency Button - Fixed */}
       <div className="fixed bottom-6 left-1/2 -translate-x-1/2">
-        <EmergencyButton />
+        <EmergencyButton onEmergency={handleEmergency} />
       </div>
     </div>
   );

@@ -27,7 +27,8 @@ const LinkPatientDialog = ({ trigger }: LinkPatientDialogProps) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const patient = getPatientByCode(code.toUpperCase());
+    // Search for patient in Supabase
+    const patient = await getPatientByCode(code.toUpperCase());
     if (!patient) {
       toast({
         title: "Invalid code",
