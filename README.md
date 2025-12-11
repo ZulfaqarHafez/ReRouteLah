@@ -225,31 +225,31 @@ supabase
   <tr>
     <td align="center">
       <a href="https://www.linkedin.com/in/olivialam-xe/">
-        <img src="https://github.com/user-attachments/assets/55e3ef28-fa9e-4d6a-a49c-17ba10f19eb2" width="100px;" alt="Olivia Lam"/><br />
+        <img src="/src/images/olivia.jpg" width="100px;" alt="Olivia Lam"/><br />
         <sub><b>Olivia Lam</b></sub>
       </a>
     </td>
     <td align="center">
       <a href="https://www.linkedin.com/in/tayweilin/">
-        <img src="https://github.com/user-attachments/assets/a0e14ee2-ef7b-4d2d-9a44-1d80b56e9ad7" width="100px;" alt="Tay Wei Lin"/><br />
+        <img src="/src/images/weilin.jpg" width="100px;" alt="Tay Wei Lin"/><br />
         <sub><b>Tay Wei Lin</b></sub>
       </a>
     </td>
     <td align="center">
       <a href="https://www.linkedin.com/in/genisa-lee-98a847260/">
-        <img src="https://github.com/user-attachments/assets/97fc89f5-2ec7-4eb5-878f-a86e8fa6bcbb" width="100px;" alt="Genisa Lee"/><br />
+        <img src="/src/images/gen.jpg" width="100px;" alt="Genisa Lee"/><br />
         <sub><b>Genisa Lee</b></sub>
       </a>
     </td>
     <td align="center">
       <a href="https://www.linkedin.com/in/tan-chun-yuan/">
-        <img src="https://github.com/user-attachments/assets/a43efa76-f1dc-44cf-8e7f-ab80f85e29df" width="100px;" alt="Tan Chun Yuan"/><br />
+        <img src="/src/images/max.jpg" width="100px;" alt="Tan Chun Yuan"/><br />
         <sub><b>Tan Chun Yuan</b></sub>
       </a>
     </td>
     <td align="center">
       <a href="https://www.linkedin.com/in/zulfaqar-hafez/">
-        <img src="https://github.com/user-attachments/assets/a19bdc62-d7d3-4f77-a024-a1a5ceb78bfa" width="100px;" alt="Zulfaqar Hafez"/><br />
+        <img src="/src/images/zul.jpg" width="100px;" alt="Zulfaqar Hafez"/><br />
         <sub><b>Zulfaqar Hafez</b></sub>
       </a>
     </td>
