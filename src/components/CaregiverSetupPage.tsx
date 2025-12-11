@@ -42,7 +42,7 @@ const CaregiverSetupPage = ({ onBack, onComplete }: CaregiverSetupPageProps) => 
           <div className="flex h-9 w-9 items-center justify-center rounded-lg gradient-primary">
             <MapPin className="h-5 w-5 text-primary-foreground" />
           </div>
-          <span className="text-lg font-bold text-foreground">ReRouteLah</span>
+          <span className="text-lg font-bold text-foreground">GuideMeSG</span>
         </div>
       </header>
 

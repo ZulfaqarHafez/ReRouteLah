@@ -39,7 +39,7 @@ const PatientProfilePage = ({ patient, onBack }: PatientProfilePageProps) => {
             >
               <ArrowLeft className="h-5 w-5" />
             </Button>
-            <span className="text-lg font-bold text-white">ReRouteLah</span>
+            <span className="text-lg font-bold text-white">GuideMeSG</span>
           </div>
           <div className="flex items-center gap-2">
             <Home className="h-5 w-5 text-slate-400" />
